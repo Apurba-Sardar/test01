@@ -1,0 +1,7 @@
+[
+  { "name": "Main Blog", "url": "https://blog.example.com", "type": "wordpress", "group": "Content" },
+  { "name": "Shop", "url": "https://shop.example.com", "type": "wordpress", "keyword": "Add to cart" },
+  { "name": "Marketing Site", "url": "https://www.example.com", "type": "nextjs" },
+  { "name": "App API health", "url": "https://app.example.com/api/health", "type": "nextjs", "expectedStatus": 200 },
+  { "name": "Old site (paused)", "url": "https://old.example.com", "type": "wordpress", "enabled": false }
+]
