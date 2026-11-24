@@ -26,6 +26,16 @@ export const config = {
   // Secret for GET /api/cron?token=… (external scheduler). Empty = endpoint disabled.
   cronToken: process.env.CRON_TOKEN || '',
 
+  // Extra checks: how often the slower health checks run, and Moz Domain Authority.
+  healthIntervalHours: num(process.env.HEALTH_CHECK_HOURS, 6),
+  articleRefreshHours: num(process.env.ARTICLE_REFRESH_HOURS, 12),
+  mozToken: process.env.MOZ_API_TOKEN || '',
+  daRefreshDays: num(process.env.DA_REFRESH_DAYS, 7),
+
+  appName: process.env.APP_NAME || 'Site Status',
+  // Optional extra secret for signing login cookies.
+  sessionSecret: process.env.SESSION_SECRET || '',
+
   dashboardUser: process.env.DASHBOARD_USER || '',
   dashboardPass: process.env.DASHBOARD_PASS || '',
   publicUrl: process.env.PUBLIC_URL || '',

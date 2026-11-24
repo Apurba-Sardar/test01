@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Sign in · Site Status</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <script>try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}</script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="login-body">
+  <button class="icon-btn theme-corner" id="themeBtn" type="button" aria-label="Switch theme" title="Switch theme"></button>
+
+  <div class="login-shell">
+    <section class="login-side">
+      <div class="brand" style="color:#fff">
+        <span class="mark"><svg viewBox="0 0 24 24"><path d="M2 13h4l2.5-6 4 12 2.5-6H22"/></svg></span>
+        <span><b>Site Status</b><small style="color:rgba(255,255,255,.75)">Internal monitoring</small></span>
+      </div>
+      <div>
+        <h1>Every site, every minute.</h1>
+        <p style="margin-top:8px">Live uptime for your WordPress and Next.js sites, with alerts the moment something breaks.</p>
+      </div>
+      <ul class="feat">
+        <li><span class="fi"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><div><b>Real-time checks</b><span>Homepage and article pages, response times and SSL.</span></div></li>
+        <li><span class="fi"><svg class="i" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="m22 6-10 7L2 6"/></svg></span><div><b>Instant email alerts</b><span>Down, recovered, SSL and domain expiry warnings.</span></div></li>
+        <li><span class="fi"><svg class="i" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><div><b>Health &amp; SEO checks</b><span>robots.txt, sitemap, noindex, WordPress API and Domain Authority.</span></div></li>
+      </ul>
+    </section>
+
+    <section class="login-main">
+      <h2>Sign in</h2>
+      <p class="sub">Enter your dashboard credentials to continue.</p>
+
+      <div class="alert" id="alert" role="alert">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span id="alertText"></span>
+      </div>
+
+      <form id="form" novalidate>
+        <div class="field">
+          <label for="username">Username</label>
+          <div class="input"><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus /></div>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="input">
+            <input id="password" name="password" type="password" autocomplete="current-password" required style="padding-right:42px" />
+            <button class="reveal" type="button" id="reveal" aria-label="Show password" title="Show password">
+              <svg class="i" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="row-between">
+          <label class="check"><input type="checkbox" id="remember" checked /> Keep me signed in for 30 days</label>
+        </div>
+        <button class="btn primary login-btn" id="submit" type="submit">Sign in</button>
+      </form>
+
+      <div class="login-foot">
+        <svg class="i" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Authorized staff only. Too many failed attempts will lock sign-in for 15 minutes.
+      </div>
+    </section>
+  </div>
+  <script src="/login.js"></script>
+</body>
+</html>
