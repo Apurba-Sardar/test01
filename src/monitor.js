@@ -12,6 +12,12 @@ const WP_ERROR_MARKERS = [
 ];
 const NEXT_ERROR_MARKERS = ['Application error: a server-side exception has occurred', 'Internal Server Error'];
 
+// Cloudflare (or similar) bot protection answering instead of the real site.
+const CHALLENGE_MARKERS = ['Attention Required! | Cloudflare', '<title>Just a moment...</title>', 'challenge-platform', 'cf-chl-'];
+const isChallenge = (res, body) =>
+  res.headers.get('cf-mitigated') === 'challenge' ||
+  ([403, 429, 503].includes(res.status) && CHALLENGE_MARKERS.some((m) => body.includes(m)));
+
 const SSL_CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 const fmtDur = (ms) => {
   const m = Math.round(ms / 60000);
@@ -115,10 +121,17 @@ export class Monitor extends EventEmitter {
         method: site.method,
         redirect: 'follow',
         signal: AbortSignal.timeout(site.timeoutMs),
-        headers: { 'user-agent': 'InternalStatusMonitor/1.0', 'cache-control': 'no-cache', ...site.headers },
+        headers: {
+          'user-agent': 'InternalStatusMonitor/1.0',
+          'cache-control': 'no-cache',
+          ...(config.monitorToken ? { 'x-status-monitor': config.monitorToken } : {}),
+          ...site.headers,
+        },
       });
       const body = site.method === 'HEAD' ? '' : await res.text();
       const ms = Math.round(performance.now() - start);
+      if (isChallenge(res, body))
+        return { ok: false, blocked: true, ms, code: res.status, error: `Blocked by bot protection (HTTP ${res.status}) — allow the monitor in Cloudflare` };
       const okStatus = site.expectedStatus
         ? [].concat(site.expectedStatus).map(Number).includes(res.status)
         : res.status >= 200 && res.status < 400;
@@ -147,12 +160,13 @@ export class Monitor extends EventEmitter {
     s.responseTime = r.ms;
     s.statusCode = r.code;
     s.error = r.error;
-    s.consecutiveFails = r.ok ? 0 : s.consecutiveFails + 1;
-    this.store.record(site.id, { t: now, ok: r.ok, ms: r.ms, slow });
+    s.consecutiveFails = r.ok || r.blocked ? 0 : s.consecutiveFails + 1;
+    this.store.record(site.id, { t: now, ok: r.blocked ? null : r.ok, ms: r.ms, slow });
 
     const prev = s.status;
     let next = prev;
-    if (r.ok) next = slow ? 'degraded' : 'up';
+    if (r.blocked) next = 'blocked'; // can't see the real site: neither up nor down, never alerts
+    else if (r.ok) next = slow ? 'degraded' : 'up';
     else if (s.consecutiveFails >= config.failThreshold || prev === 'down') next = 'down';
     else if (prev === 'pending') next = 'pending';
 
@@ -164,18 +178,18 @@ export class Monitor extends EventEmitter {
         s.downSince = now;
         s.lastAlertAt = now;
         event = { kind: 'down', site, error: r.error };
-      } else if (prev === 'down') {
-        event = { kind: 'recovered', site, downtime: now - (s.downSince || now) };
+      } else if (s.downSince && (next === 'up' || next === 'degraded')) {
+        event = { kind: 'recovered', site, downtime: now - s.downSince };
         s.downSince = null;
       }
-      if (event || next === 'degraded' || prev === 'degraded') {
+      if (event || next === 'blocked' || next === 'degraded' || (prev === 'degraded' && next === 'up')) {
         this.store.addIncident({
           t: now,
           siteId: site.id,
           name: site.name,
           from: prev,
           to: next,
-          detail: next === 'down' ? r.error : next === 'degraded' ? `Slow response: ${r.ms} ms` : event?.downtime ? `Down for ${fmtDur(event.downtime)}` : '',
+          detail: next === 'down' || next === 'blocked' ? r.error : next === 'degraded' ? `Slow response: ${r.ms} ms` : event?.downtime ? `Down for ${fmtDur(event.downtime)}` : '',
         });
       }
     } else if (next === 'down' && config.realertMinutes > 0 && now - (s.lastAlertAt || 0) >= config.realertMinutes * 60000) {
@@ -249,7 +263,8 @@ export class Monitor extends EventEmitter {
     const sites = this.sites.map((site) => {
       const s = this.store.get(site.id);
       const h = s.history;
-      const okCount = h.filter((x) => x.ok).length;
+      const seen = h.filter((x) => x.ok !== null); // blocked checks don't count either way
+      const okCount = seen.filter((x) => x.ok).length;
       return {
         ...site,
         headers: undefined,
@@ -261,7 +276,7 @@ export class Monitor extends EventEmitter {
         statusCode: s.statusCode,
         error: s.error,
         ssl: s.ssl,
-        uptime24h: h.length ? (okCount / h.length) * 100 : null,
+        uptime24h: seen.length ? (okCount / seen.length) * 100 : null,
         history: h.slice(-60),
       };
     });

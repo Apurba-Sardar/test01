@@ -35,22 +35,27 @@ function render() {
   const sites = data.sites;
   const down = sites.filter((s) => s.status === 'down');
   const slow = sites.filter((s) => s.status === 'degraded');
+  const blocked = sites.filter((s) => s.status === 'blocked');
   const up = sites.filter((s) => s.status === 'up' || s.status === 'degraded');
   const count = (t) => sites.filter((s) => typeKey(s.type) === t).length;
   const countDown = (t) => down.filter((s) => typeKey(s.type) === t).length;
 
   // banner
   const b = $('#banner');
-  b.className = 'banner' + (down.length ? ' down' : slow.length ? ' warn' : '');
+  b.className = 'banner' + (down.length ? ' down' : slow.length || blocked.length ? ' warn' : '');
   $('#bannerTitle').textContent = !sites.length
     ? 'No sites configured yet — add them to sites.json'
     : down.length
     ? `${down.length} of ${sites.length} site${sites.length > 1 ? 's' : ''} down`
+    : blocked.length
+    ? `${up.length} up · ${blocked.length} can't be checked (blocked by Cloudflare)`
     : slow.length
     ? `All sites up · ${slow.length} responding slowly`
     : 'All systems operational';
   $('#bannerSub').textContent = down.length
     ? down.map((s) => s.name).join(', ')
+    : blocked.length
+    ? `Allow the monitor in Cloudflare for: ${blocked.map((s) => s.name).join(', ')} — see README`
     : `Checking every ${data.intervalSec}s · last update ${new Date(data.now).toLocaleTimeString()}`;
   document.title = down.length ? `(${down.length} down) Site Status` : 'Site Status';
   $('#favicon').href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='${down.length ? '%23dc3b3b' : '%2322a06b'}'/></svg>`;
@@ -66,11 +71,11 @@ function render() {
     tile('WordPress', count('wordpress'), countDown('wordpress') ? `<b style="color:var(--down)">${countDown('wordpress')} down</b>` : 'all up') +
     tile('Next.js', count('nextjs'), countDown('nextjs') ? `<b style="color:var(--down)">${countDown('nextjs')} down</b>` : 'all up') +
     tile('Up', up.length, slow.length ? `${slow.length} slow` : 'healthy', 'up') +
-    tile('Down', down.length, down.length ? 'needs attention' : 'none', down.length ? 'down' : '') +
+    tile('Down', down.length, down.length ? 'needs attention' : blocked.length ? `${blocked.length} blocked` : 'none', down.length ? 'down' : '') +
     tile('Avg response', avg == null ? '—' : `${avg}<small style="font-size:14px"> ms</small>`, avgUp == null ? '' : `${avgUp.toFixed(2)}% uptime 24h`);
 
   // filter counts
-  const fc = { all: sites.length, wordpress: count('wordpress'), nextjs: count('nextjs'), other: count('other'), problems: down.length + slow.length };
+  const fc = { all: sites.length, wordpress: count('wordpress'), nextjs: count('nextjs'), other: count('other'), problems: down.length + slow.length + blocked.length };
   document.querySelectorAll('#filters button').forEach((btn) => {
     const f = btn.dataset.f;
     btn.classList.toggle('on', f === filter);
@@ -79,10 +84,10 @@ function render() {
   });
 
   // list — problems first, then by name
-  const order = { down: 0, degraded: 1, pending: 2, up: 3 };
+  const order = { down: 0, blocked: 1, degraded: 2, pending: 3, up: 4 };
   const q = query.toLowerCase();
   const shown = sites
-    .filter((s) => filter === 'all' || (filter === 'problems' ? s.status === 'down' || s.status === 'degraded' : typeKey(s.type) === filter))
+    .filter((s) => filter === 'all' || (filter === 'problems' ? ['down', 'degraded', 'blocked'].includes(s.status) : typeKey(s.type) === filter))
     .filter((s) => !q || (s.name + ' ' + s.url + ' ' + s.group).toLowerCase().includes(q))
     .sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
 
@@ -93,10 +98,11 @@ function render() {
         .map((s) => {
           const hist = s.history;
           const pad = Array(Math.max(0, 60 - hist.length)).fill('<i class="e"></i>').join('');
-          const bars = pad + hist.map((h) => `<i class="${h.ok ? (h.slow ? 's' : '') : 'f'}" title="${new Date(h.t).toLocaleString()} · ${h.ok ? h.ms + ' ms' : 'failed'}"></i>`).join('');
+          const bars = pad + hist.map((h) => `<i class="${h.ok === null ? 'b' : h.ok ? (h.slow ? 's' : '') : 'f'}" title="${new Date(h.t).toLocaleString()} · ${h.ok === null ? 'blocked' : h.ok ? h.ms + ' ms' : 'failed'}"></i>`).join('');
           const ssl = s.ssl?.daysLeft != null ? `<span style="color:${s.ssl.daysLeft <= 14 ? 'var(--warn)' : 'inherit'}">${s.ssl.daysLeft}d</span>` : '—';
           const sub = s.status === 'down'
             ? `<div class="err" title="${esc(s.error)}">${esc(s.error)} · down ${dur(Date.now() - (s.downSince || Date.now()))}</div>`
+            : s.status === 'blocked' ? `<div class="err warn" title="${esc(s.error)}">${esc(s.error)}</div>`
             : s.status === 'pending' && s.error ? `<div class="err">${esc(s.error)} (retrying)</div>` : '';
           return `<div class="row ${s.status === 'down' ? 'is-down' : ''}">
             <span class="dot ${s.status}" title="${s.status}"></span>
@@ -113,7 +119,7 @@ function render() {
     : `<div class="empty">${sites.length ? 'No sites match this filter.' : 'Add your sites to <code>sites.json</code> — the page updates automatically.'}</div>`;
 
   // incidents
-  const lab = { down: 'DOWN', up: 'UP', degraded: 'SLOW' };
+  const lab = { down: 'DOWN', up: 'UP', degraded: 'SLOW', blocked: 'BLOCKED' };
   $('#incidents').innerHTML = data.incidents.length
     ? data.incidents
         .slice(0, 30)

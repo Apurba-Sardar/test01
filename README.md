@@ -11,6 +11,7 @@ An internal, self-hosted status page for all your **WordPress** and **Next.js** 
   - Next.js sites are also marked down when the page shows *"Application error"*.
   - You can require a keyword on any page.
 - **No false alarms from one blip**: a site is marked down only after `FAIL_THRESHOLD` failures in a row (default 2).
+- Cloudflare challenge pages are detected and shown as **Blocked**, not as false outages (see below).
 - Browser notifications, and the tab title shows how many sites are down (for example `(2 down)`).
 - A login (HTTP Basic Auth) protects the page.
 - One dependency (`nodemailer`) and no database. State is kept in `data/state.json`.
@@ -59,6 +60,22 @@ docker compose up -d --build
 
 The file is **reloaded automatically** when you save it, so you don't need to restart.
 (With Docker, editors that replace the file can break the single-file mount. If edits don't show up, run `docker compose restart`.)
+
+## Sites behind Cloudflare (important)
+
+Cloudflare's bot protection can answer the monitor with a challenge page ("Just a moment…" or "Attention Required!") instead of your site. In that case the monitor can't see whether your site is up.
+
+The monitor detects these challenge pages and shows the site as **Blocked** (an orange ring). Blocked checks never send alerts and don't count against uptime. But while a site is blocked, it isn't really being monitored. To let the monitor through, do one of these on each Cloudflare zone:
+
+1. **Allow the monitor's server IP (simplest).** Go to *Security → WAF → Tools → IP Access Rules*, add your monitor server's IP and choose **Allow**.
+2. **Use a secret header.** Set `MONITOR_TOKEN` in `.env`. Then create a WAF custom rule (*Security → WAF → Custom rules*):
+   - Expression: `(http.request.headers["x-status-monitor"][0] eq "YOUR_TOKEN")`
+   - Action: **Skip**, and tick all the remaining custom rules, rate limiting, managed rules and Super Bot Fight Mode.
+   - Put the rule first.
+
+The free plan's *Bot Fight Mode* can't be bypassed with rules. If it's on and a site stays Blocked, turn it off for that zone or use option 1. Cloudflare changes these menus often, so check their docs if a menu name differs.
+
+Real outages are still caught when Cloudflare is in front of a site. If the origin server is down, Cloudflare returns HTTP 520–526 (or 502/503/504), and the monitor reports that as **DOWN**.
 
 ## Email setup examples
 

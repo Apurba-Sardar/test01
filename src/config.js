@@ -14,6 +14,9 @@ export const config = {
   realertMinutes: num(process.env.REALERT_MINUTES, 60), // 0 = never re-alert
   sslWarnDays: num(process.env.SSL_WARN_DAYS, 14),
 
+  // Sent as the X-Status-Monitor header so a Cloudflare WAF rule can let the monitor through.
+  monitorToken: process.env.MONITOR_TOKEN || '',
+
   dashboardUser: process.env.DASHBOARD_USER || '',
   dashboardPass: process.env.DASHBOARD_PASS || '',
   publicUrl: process.env.PUBLIC_URL || '',

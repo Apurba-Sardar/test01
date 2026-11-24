@@ -57,6 +57,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--pending); }
 .dot.up { background: var(--up); }
 .dot.degraded { background: var(--warn); }
+.dot.blocked { background: transparent; border: 3px solid var(--warn); }
 .dot.down { background: var(--down); box-shadow: 0 0 0 4px color-mix(in srgb, var(--down) 25%, transparent); animation: blink 1.4s infinite; }
 @keyframes blink { 50% { opacity: .45; } }
 .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -71,6 +72,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .bars i.f { background: var(--down); opacity: 1; }
 .bars i.s { background: var(--warn); }
 .bars i.e { background: var(--border); }
+.bars i.b { background: var(--warn); opacity: .35; }
+.err.warn { color: var(--warn); }
 .num { font-variant-numeric: tabular-nums; text-align: right; }
 .num small { display: block; color: var(--muted); font-size: 11px; }
 .recheck { border: 1px solid var(--border); background: transparent; border-radius: 6px; width: 30px; height: 30px; color: var(--muted); }
@@ -88,7 +91,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; }
 .tag.down { background: var(--down-soft); color: var(--down); }
 .tag.up { background: var(--up-soft); color: var(--up); }
-.tag.degraded { background: var(--warn-soft); color: var(--warn); }
+.tag.blocked, .tag.degraded { background: var(--warn-soft); color: var(--warn); }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; transition: transform .25s, opacity .25s; max-width: calc(100% - 32px); opacity: 0; visibility: hidden; }
 .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; visibility: visible; }
