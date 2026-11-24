@@ -10,6 +10,17 @@ import { sendMail, mailEnabled } from './mailer.js';
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
+// The public IP this server uses for outgoing requests: the one to allow in Cloudflare.
+async function outgoingIp() {
+  for (const u of ['https://api.ipify.org', 'https://icanhazip.com']) {
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) return (await r.text()).trim();
+    } catch {}
+  }
+  return null;
+}
+
 const store = new Store(config.dataDir);
 const monitor = new Monitor(store);
 const clients = new Set();
@@ -76,6 +87,8 @@ const server = http.createServer(async (req, res) => {
     return r ? json(res, 200, r) : json(res, 404, { error: 'unknown site' });
   }
 
+  if (url.pathname === '/api/outgoing-ip') return json(res, 200, { ip: await outgoingIp() });
+
   if (req.method === 'POST' && url.pathname === '/api/test-email') {
     const r = await sendMail('✅ Test email from your status monitor', [
       'Email alerts are configured correctly.',
@@ -99,6 +112,7 @@ server.listen(config.port, () => {
   console.log(`Email alerts: ${mailEnabled() ? 'enabled → ' + config.smtp.to.join(', ') : 'DISABLED (set SMTP_* and ALERT_EMAIL_TO)'}`);
   if (!config.dashboardUser) console.log('Warning: DASHBOARD_USER/DASHBOARD_PASS not set — dashboard is open to anyone who can reach it');
   monitor.start();
+  outgoingIp().then((ip) => console.log(`Outgoing IP (allow this in Cloudflare): ${ip ?? 'unknown'}`));
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'])

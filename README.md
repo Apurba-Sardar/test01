@@ -190,7 +190,7 @@ If the built-in timer is also running, the monitor skips the extra round, so fai
 **5. Check it works**
 - Open the dashboard, log in, and click **Test email**. If it times out, outgoing SMTP may be blocked. Try `SMTP_PORT=587` with `SMTP_SECURE=false`, or ask Hostinger support to open the port.
 - Look at **Runtime Logs** in the sidebar. You should see `monitoring 6 site(s)` and `Email alerts: enabled`.
-- Allow the Hostinger server's outgoing IP in Cloudflare for your sites (see "Sites behind Cloudflare"). Hostinger support can tell you the IP. Otherwise, call `/api/cron` once and look for the Cloudflare block.
+- Allow the server's outgoing IP in Cloudflare for your sites (see "Sites behind Cloudflare"). The IP is printed in **Runtime Logs** as `Outgoing IP (allow this in Cloudflare): …`, and you can also open `/api/outgoing-ip` on the dashboard.
 
 **Notes for Hostinger**
 - **Live connection:** Hostinger stops any request after 120 seconds. The live dashboard connection renews itself every ~100 seconds, so you won't notice.
@@ -220,6 +220,7 @@ All endpoints except `/healthz` use the dashboard login.
 - `GET /api/status`: JSON snapshot of every site
 - `GET /api/events`: live stream of updates (Server-Sent Events)
 - `POST /api/check-all`, `POST /api/check/:id`: run checks now
+- `GET /api/outgoing-ip`: the server's public outgoing IP, which is the one to allow in Cloudflare
 - `POST /api/test-email`: send a test alert
 - `GET /api/cron?token=CRON_TOKEN`: run a round of checks (for cron jobs); uses the token instead of the login
 - `GET /healthz`: liveness check, no login required
