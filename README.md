@@ -77,7 +77,29 @@ The free plan's *Bot Fight Mode* can't be bypassed with rules. If it's on and a 
 
 Real outages are still caught when Cloudflare is in front of a site. If the origin server is down, Cloudflare returns HTTP 520–526 (or 502/503/504), and the monitor reports that as **DOWN**.
 
-## Email setup examples
+## Gmail setup (used for alerts)
+
+1. Choose the Gmail or Google Workspace account that will **send** the alerts. A dedicated account such as `alerts@…` works well.
+2. Turn on **2-Step Verification** for that account. App passwords require it.
+3. Go to <https://myaccount.google.com/apppasswords>, create an app password named "Status Monitor", and copy the 16-character code.
+4. In `.env`, set:
+   ```env
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=465
+   SMTP_SECURE=true
+   SMTP_USER=the-sending-account@yourdomain.com
+   SMTP_PASS=the16charapppassword   # no spaces
+   ALERT_EMAIL_FROM="Site Status Monitor <the-sending-account@yourdomain.com>"
+   ALERT_EMAIL_TO=you@yourdomain.com
+   ```
+5. Restart the monitor, then click **Test email** on the dashboard.
+
+Possible problems:
+- **App passwords page says the setting isn't available:** on Google Workspace, an admin may need to allow it. In the Admin console, go to *Security → Authentication → 2-step verification*.
+- **Daily sending limit:** Gmail allows about 500 emails a day, and Workspace about 2,000. The monitor sends one email per check cycle, so it stays far below that.
+- **Alerts go to spam:** add the sending address to your contacts, or create a filter that sets "Never send to Spam".
+
+## Other email providers
 
 | Provider | SMTP_HOST | SMTP_PORT | SMTP_SECURE | Notes |
 |---|---|---|---|---|
