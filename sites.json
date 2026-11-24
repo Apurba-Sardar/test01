@@ -4,5 +4,5 @@
   { "name": "Cosmic Calling", "url": "https://cosmiccalling.com", "type": "other", "keyword": "Cosmic Calling" },
   { "name": "Make Your Text Human", "url": "https://www.makeyourtexthuman.com", "type": "other", "keyword": "Make Your Text Human" },
   { "name": "Mind.family", "url": "https://mind.family", "type": "wordpress" },
-  { "name": "MindTalkHub", "url": "https://mindtalkhub.com", "type": "wordpress" }
+  { "name": "MindTalkHub", "url": "https://mindtalkhub.com", "type": "nextjs" }
 ]
