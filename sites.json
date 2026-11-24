@@ -1,0 +1,8 @@
+[
+  { "name": "The Minds Journal", "url": "https://themindsjournal.com", "type": "wordpress" },
+  { "name": "Mind.help", "url": "https://mind.help", "type": "wordpress" },
+  { "name": "Cosmic Calling", "url": "https://cosmiccalling.com", "type": "other", "keyword": "Cosmic Calling" },
+  { "name": "Make Your Text Human", "url": "https://www.makeyourtexthuman.com", "type": "other", "keyword": "Make Your Text Human" },
+  { "name": "Mind.family", "url": "https://mind.family", "type": "other" },
+  { "name": "MindTalkHub", "url": "https://mindtalkhub.com", "type": "other" }
+]
