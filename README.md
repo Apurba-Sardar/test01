@@ -111,6 +111,50 @@ Possible problems:
 
 `ALERT_EMAIL_TO` takes a comma-separated list of addresses.
 
+## Hosting on Hostinger
+
+There are two ways to run the monitor on Hostinger. **Option A (VPS) is the most reliable.** Option B is easier if you already have a Business or Cloud plan.
+
+> If your sites are hosted on Hostinger too, put the monitor on a **different** server (or a separate VPS). Otherwise one outage can take down your sites and the monitor together, and no alert email gets sent.
+
+### Option A: Hostinger VPS with Docker (recommended)
+
+A small VPS (KVM 1 is enough) keeps the monitor running 24/7, keeps its history, and lets you open any SMTP port.
+
+1. In hPanel, open **VPS**, choose the **Ubuntu + Docker** template (or plain Ubuntu, then install Docker), and note the server's IP.
+2. SSH in and run:
+   ```bash
+   git clone https://github.com/Apurba-Sardar/test01.git status && cd status
+   cp .env.example .env && nano .env      # Gmail App Password, alert email, dashboard login
+   docker compose up -d --build
+   ```
+3. Point a subdomain at the VPS IP, for example `status.themindsjournal.com` (an A record). Then put HTTPS in front of the app with Caddy, the simplest option:
+   ```bash
+   sudo apt install -y caddy
+   echo 'status.themindsjournal.com {
+     reverse_proxy 127.0.0.1:3000
+   }' | sudo tee /etc/caddy/Caddyfile && sudo systemctl reload caddy
+   ```
+   Then set `PUBLIC_URL=https://status.themindsjournal.com` in `.env`.
+4. In **Cloudflare**, allow the VPS IP for each site (see "Sites behind Cloudflare").
+5. To update later, run `git pull && docker compose up -d --build`.
+
+### Option B: Hostinger managed Node.js web app (Business / Cloud plans)
+
+1. In hPanel, go to **Websites → Add website → Node.js web app**. Connect GitHub, choose this repository and the `main` branch.
+2. Set these build settings:
+   - **Node version:** 20 or 22
+   - **Install command:** `npm install`
+   - **Start command:** `npm start` (entry file: `src/server.js`)
+   - The app reads `PORT` from the environment automatically.
+3. Under **Environment variables**, add the values from `.env.example`. At minimum: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, `DASHBOARD_USER`, `DASHBOARD_PASS` and `PUBLIC_URL`.
+4. Deploy. Then open the site and click **Test email**.
+
+Things to check on managed hosting:
+- **Keep it running.** The monitor has to run all the time to check your sites every minute. If Hostinger puts idle apps to sleep, checks (and alerts) stop until someone opens the page. After deploying, leave the dashboard closed for an hour, then open **Recent events** and the per-site bars. If the bars have gaps, use Option A.
+- **Outgoing email.** If **Test email** fails with a connection timeout, the plan may block outgoing SMTP. Try `SMTP_PORT=587` with `SMTP_SECURE=false`, or use Option A.
+- **History.** History lives in `data/state.json` and may be wiped on redeploy. Monitoring keeps working; only the 24-hour bars start over.
+
 ## Where to run it
 
 Run it on a server **separate from the servers hosting your sites**. If it runs on the same box, it goes down with them and can't email you. A small VPS works, and so does any always-on machine. Put it behind your reverse proxy (Nginx or Caddy) with HTTPS, and set `PUBLIC_URL` so the alert emails link to it.

@@ -1,4 +1,10 @@
-// Central configuration, read from environment variables (.env is loaded by `npm start`).
+// Central configuration, read from environment variables.
+// A local .env file is loaded if present; on hosts like Hostinger you can set the variables in the panel instead.
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file — use the real environment */
+}
 const num = (v, d) => (v === undefined || v === '' || isNaN(Number(v)) ? d : Number(v));
 
 export const config = {
