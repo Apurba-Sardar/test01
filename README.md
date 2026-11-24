@@ -2,6 +2,7 @@
 
 An internal, self-hosted status page for all your **WordPress** and **Next.js** sites.
 
+- **Login page** with secure sessions ("keep me signed in for 30 days"), brute-force lockout and sign-out.
 - **Live dashboard** that updates in real time: totals for all sites, WordPress, Next.js, up and down, plus average response time and uptime.
 - Each site shows its status, response time, 24-hour uptime, bars for its last 60 checks, and how many days are left on its SSL certificate.
 - **Email alerts** when a site goes **down**, a **reminder** while it stays down, a mail when it **recovers** (with the downtime), and a warning when its **SSL certificate is close to expiring**.
@@ -12,6 +13,12 @@ An internal, self-hosted status page for all your **WordPress** and **Next.js** 
   - You can require a keyword on any page.
 - **No false alarms from one blip**: a site is marked down only after `FAIL_THRESHOLD` failures in a row (default 2).
 - Cloudflare challenge pages are detected and shown as **Blocked**, not as false outages (see below).
+- **Homepage + article page** are checked for every site. The article is found automatically (latest WordPress post, or a recent page from the sitemap), or you can set `articleUrl` in `sites.json`.
+- **Health & SEO checks** every few hours: HTTP→HTTPS redirect, SSL, domain expiry, robots.txt (does it block search engines?), XML sitemap, noindex on the homepage, title & meta description, CSS/JS files loading, and for WordPress the REST API and RSS feed. Newly failing checks are emailed.
+- **Domain Authority** (Moz DA) per site, refreshed weekly, when `MOZ_API_TOKEN` is set.
+- **Site detail panel** (click any site): response-time chart, 30-day uptime bars, uptime for 24h / 7d / 30d, every page checked, health results, DA and the site's event history.
+- **Pause for maintenance**: pause a site from its detail panel. No checks and no alerts until you resume.
+- Light/dark theme switch, sorting, search (press `/`), and a footer with the monitor's settings and outgoing IP.
 - Browser notifications, and the tab title shows how many sites are down (for example `(2 down)`).
 - A login (HTTP Basic Auth) protects the page.
 - One dependency (`nodemailer`) and no database. State is kept in `data/state.json`.
@@ -56,10 +63,18 @@ docker compose up -d --build
 | `headers` | — | Extra request headers, for example to get past a firewall that blocks bots |
 | `timeoutMs` | — | Timeout for this site only |
 | `group` | — | Label you can search for |
-| `enabled` | — | `false` pauses monitoring |
+| `enabled` | — | `false` removes the site from monitoring |
+| `articleUrl` | — | Article page to check. Leave it out to find one automatically, or set it to `false` to skip the article check. |
+| `pages` | — | Extra pages to check, for example `[{ "name": "Contact", "url": "https://…/contact", "keyword": "Send" }]` |
 
 The file is **reloaded automatically** when you save it, so you don't need to restart.
 (With Docker, editors that replace the file can break the single-file mount. If edits don't show up, run `docker compose restart`.)
+
+## Domain Authority (Moz)
+
+1. Create a Moz API token at <https://moz.com/products/api>. A free plan with a small monthly quota is available.
+2. Set `MOZ_API_TOKEN` in `.env`, or under Environment variables on Hostinger.
+3. DA is fetched once per site every `DA_REFRESH_DAYS` (default 7), which uses about 26 API rows a month for 6 sites. The detail panel also shows the spam score and the previous DA value.
 
 ## Sites behind Cloudflare (important)
 
@@ -215,9 +230,13 @@ To keep it running without Docker, use `pm2 start npm --name status -- start` or
 
 ## API
 
-All endpoints except `/healthz` use the dashboard login.
+All endpoints except `/healthz`, `/login` and `/api/cron` need you to be signed in.
 
+- `POST /api/login` / `POST /api/logout`: sign in or out (cookie session). Scripts can also use HTTP Basic auth (`curl -u user:pass`).
 - `GET /api/status`: JSON snapshot of every site
+- `GET /api/sites/:id`: full detail for one site (24h history, 30-day hourly uptime, health checks, events)
+- `POST /api/sites/:id/check`, `POST /api/sites/:id/health`: run that site's checks or health checks now
+- `POST /api/sites/:id/pause` with `{"paused": true|false}`: maintenance mode
 - `GET /api/events`: live stream of updates (Server-Sent Events)
 - `POST /api/check-all`, `POST /api/check/:id`: run checks now
 - `GET /api/outgoing-ip`: the server's public outgoing IP, which is the one to allow in Cloudflare

@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HISTORY_MS = 24 * 60 * 60 * 1000; // keep 24h of check results per site
-const MAX_INCIDENTS = 300;
+const MAX_INCIDENTS = 500;
+const HOURLY_MS = 30 * 24 * 60 * 60 * 1000; // hourly uptime buckets kept for 30 days
+const HOUR = 3600 * 1000;
 
 export class Store {
   constructor(dataDir) {
@@ -41,6 +43,8 @@ export class Store {
         ssl: null,
         sslAlertDay: null,
         history: [],
+        hourly: [], // [{ h: hourStart, n: checks, ok: successes, ms: total ms of successes }]
+        paused: false,
       };
     }
     return this.sites[id];
@@ -51,6 +55,20 @@ export class Store {
     s.history.push({ t: result.t, ok: result.ok, ms: result.ms, slow: !!result.slow });
     const cutoff = Date.now() - HISTORY_MS;
     while (s.history.length && s.history[0].t < cutoff) s.history.shift();
+
+    if (result.ok !== null) {
+      s.hourly ||= [];
+      const h = Math.floor(result.t / HOUR) * HOUR;
+      let b = s.hourly[s.hourly.length - 1];
+      if (!b || b.h !== h) s.hourly.push((b = { h, n: 0, ok: 0, ms: 0 }));
+      b.n++;
+      if (result.ok) {
+        b.ok++;
+        b.ms += result.ms;
+      }
+      const hCut = Date.now() - HOURLY_MS;
+      while (s.hourly.length && s.hourly[0].h < hCut) s.hourly.shift();
+    }
     this.dirty = true;
   }
 
