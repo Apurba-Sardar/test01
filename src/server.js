@@ -42,6 +42,9 @@ const snapshot = () => ({
     recipients: config.smtp.to.length,
     realertMinutes: config.realertMinutes,
     healthIntervalHours: config.healthIntervalHours,
+    cronEnabled: !!config.cronToken,
+    sslWarnDays: config.sslWarnDays,
+    healthRunning: !!monitor.healthRunning,
     mozEnabled: !!config.mozToken,
     outgoingIp: cachedIp,
   },
@@ -170,6 +173,15 @@ const server = http.createServer(async (req, res) => {
       const site = monitor.sites.find((s) => s.id === m[1]);
       if (!site) return json(res, 404, { error: 'unknown site' });
       return json(res, 200, await monitor.runHealth(site));
+    }
+
+    if (p === '/api/incidents') {
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 500, 500);
+      return json(res, 200, { incidents: store.incidents.slice(0, limit), total: store.incidents.length });
+    }
+    if (req.method === 'POST' && p === '/api/health-all') {
+      monitor.runHealthDue(true).catch((e) => console.error(`[health] ${e.message}`));
+      return json(res, 202, { started: true });
     }
 
     if (p === '/api/outgoing-ip') return json(res, 200, { ip: await outgoingIp(true) });

@@ -1,7 +1,19 @@
-# Site Status Monitor
+# TMJ Dashboard
 
-An internal, self-hosted status page for all your **WordPress** and **Next.js** sites.
+The office's internal web-operations dashboard for all **TMJ** websites: **WordPress** and **Next.js** uptime, incidents, SEO health, renewals and Domain Authority in one CRM-style app.
 
+**Pages**
+- **Overview:** greeting, a status banner, and headline numbers: websites, operational, issues, average response, uptime and average DA. It also has "Sites at a glance", a "Needs attention" to-do list, response time by site, status and platform split, upcoming renewals and live activity.
+- **Sites:** a sortable, filterable table of every website, with its status, pages, recent checks, response time, uptime, DA, SSL and health. You can export it as CSV.
+- **Site record:** opens when you click a website. It has a header with actions (check now, run health checks, pause, visit) and four tabs: *Overview* (stats, response-time chart, pages, 30-day uptime), *Health & SEO*, *Activity* and *Configuration*.
+- **Incidents:** the full outage and recovery history with summary numbers, filters, search and CSV export.
+- **Health & SEO:** a grid of every website against every check, plus an "Issues to fix" list.
+- **Domains & SSL:** a renewal schedule (domain registration and SSL expiry), DA and spam score, with CSV export.
+- **Settings & alerts:** monitoring, email, integration and system status, a test-email button, and the outgoing IP.
+
+The app also has a sidebar with live badges, a top bar with global search (press `/`), a notifications bell, a light/dark switch, and a phone layout with a slide-out menu.
+
+**Features**
 - **Login page** with secure sessions ("keep me signed in for 30 days"), brute-force lockout and sign-out.
 - **Live dashboard** that updates in real time: totals for all sites, WordPress, Next.js, up and down, plus average response time and uptime.
 - Each site shows its status, response time, 24-hour uptime, bars for its last 60 checks, and how many days are left on its SSL certificate.
