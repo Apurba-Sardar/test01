@@ -141,19 +141,60 @@ A small VPS (KVM 1 is enough) keeps the monitor running 24/7, keeps its history,
 
 ### Option B: Hostinger managed Node.js web app (Business / Cloud plans)
 
-1. In hPanel, go to **Websites → Add website → Node.js web app**. Connect GitHub, choose this repository and the `main` branch.
-2. Set these build settings:
-   - **Node version:** 20 or 22
-   - **Install command:** `npm install`
-   - **Start command:** `npm start` (entry file: `src/server.js`)
-   - The app reads `PORT` from the environment automatically.
-3. Under **Environment variables**, add the values from `.env.example`. At minimum: `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, `DASHBOARD_USER`, `DASHBOARD_PASS` and `PUBLIC_URL`.
-4. Deploy. Then open the site and click **Test email**.
+Use this option on Hostinger's Business or Cloud plans. It was written for **Cloud Enterprise Plus**.
 
-Things to check on managed hosting:
-- **Keep it running.** The monitor has to run all the time to check your sites every minute. If Hostinger puts idle apps to sleep, checks (and alerts) stop until someone opens the page. After deploying, leave the dashboard closed for an hour, then open **Recent events** and the per-site bars. If the bars have gaps, use Option A.
-- **Outgoing email.** If **Test email** fails with a connection timeout, the plan may block outgoing SMTP. Try `SMTP_PORT=587` with `SMTP_SECURE=false`, or use Option A.
-- **History.** History lives in `data/state.json` and may be wiped on redeploy. Monitoring keeps working; only the 24-hour bars start over.
+**1. Create the app**
+1. In hPanel, go to **Websites → Add Website → Node.js web app**.
+2. Click **Connect with GitHub**, install the Hostinger GitHub App, and give it access to this repository.
+3. Pick the repository and use these deploy settings:
+
+   | Setting | Value |
+   |---|---|
+   | Framework preset | **Other** |
+   | Branch | `main` |
+   | Node.js version | **22** |
+   | Package manager | npm |
+   | Build command | *(none)* |
+   | Entry file | `src/server.js` |
+
+**2. Set environment variables.** You can do this on the deploy screen, or later under **Environment variables** in the website sidebar. *Import .env* lets you paste them all at once. Saving redeploys the app.
+
+```env
+DASHBOARD_USER=admin
+DASHBOARD_PASS=<strong password>
+PUBLIC_URL=https://status.yourdomain.com
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=<sending gmail account>
+SMTP_PASS=<16-char app password>
+ALERT_EMAIL_FROM=Site Status Monitor <sending gmail account>
+ALERT_EMAIL_TO=<where alerts go>
+CRON_TOKEN=<long random string>
+DATA_DIR=/home/<your-hostinger-user>/status-data
+```
+
+- **`DATA_DIR`:** each deploy replaces the app folder (`hbuilds/…`), so keep the history file outside it. Your home path is shown in **File Manager** and looks like `/home/u123456789`.
+- **`PORT`:** don't set it. Hostinger provides it.
+
+**3. Add a cron job (important).** Hostinger notes that timers inside an app stop whenever the app is redeployed or restarted, and it recommends cron jobs for scheduled work. The cron job keeps checks running no matter what happens to the process.
+
+In hPanel, go to **Advanced → Cron Jobs** and add a job that runs **every minute**:
+```bash
+curl -fsS --max-time 110 "https://status.yourdomain.com/api/cron?token=<CRON_TOKEN>" > /dev/null
+```
+If the built-in timer is also running, the monitor skips the extra round, so failures are never counted twice.
+
+**4. Domain.** In the website dashboard, click **Connect domain** and use a subdomain such as `status.yourdomain.com`. Hostinger installs SSL automatically. If the domain goes through Cloudflare, set SSL mode to **Full**.
+
+**5. Check it works**
+- Open the dashboard, log in, and click **Test email**. If it times out, outgoing SMTP may be blocked. Try `SMTP_PORT=587` with `SMTP_SECURE=false`, or ask Hostinger support to open the port.
+- Look at **Runtime Logs** in the sidebar. You should see `monitoring 6 site(s)` and `Email alerts: enabled`.
+- Allow the Hostinger server's outgoing IP in Cloudflare for your sites (see "Sites behind Cloudflare"). Hostinger support can tell you the IP. Otherwise, call `/api/cron` once and look for the Cloudflare block.
+
+**Notes for Hostinger**
+- **Live connection:** Hostinger stops any request after 120 seconds. The live dashboard connection renews itself every ~100 seconds, so you won't notice.
+- **Deploys:** every push to `main` redeploys automatically, including edits to `sites.json`.
 
 ## Where to run it
 
@@ -180,4 +221,5 @@ All endpoints except `/healthz` use the dashboard login.
 - `GET /api/events`: live stream of updates (Server-Sent Events)
 - `POST /api/check-all`, `POST /api/check/:id`: run checks now
 - `POST /api/test-email`: send a test alert
+- `GET /api/cron?token=CRON_TOKEN`: run a round of checks (for cron jobs); uses the token instead of the login
 - `GET /healthz`: liveness check, no login required

@@ -37,6 +37,16 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/healthz') return json(res, 200, { ok: true });
 
+  // For an external scheduler (e.g. a Hostinger cron job) — keeps checks running even if the
+  // host pauses or restarts the app. Protected by CRON_TOKEN instead of the dashboard login.
+  if (url.pathname === '/api/cron') {
+    const token = url.searchParams.get('token') || req.headers['x-cron-token'];
+    if (!config.cronToken || token !== config.cronToken) return json(res, 403, { error: 'bad or missing token' });
+    await monitor.runAll();
+    const sites = monitor.snapshot().sites;
+    return json(res, 200, { checked: sites.length, down: sites.filter((s) => s.status === 'down').map((s) => s.name) });
+  }
+
   if (!authorized(req)) {
     res.writeHead(401, { 'www-authenticate': 'Basic realm="Status"' });
     return res.end('Authentication required');
@@ -46,15 +56,17 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-    res.write(`retry: 3000\ndata: ${JSON.stringify(monitor.snapshot())}\n\n`);
+    res.write(`retry: 1000\ndata: ${JSON.stringify(monitor.snapshot())}\n\n`);
     clients.add(res);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
-    req.on('close', () => { clearInterval(ping); clients.delete(res); });
+    // Hosts like Hostinger cut requests at 120 s; end the stream first, the browser reconnects in 1 s.
+    const recycle = setTimeout(() => res.end(), 100_000);
+    req.on('close', () => { clearInterval(ping); clearTimeout(recycle); clients.delete(res); });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/check-all') {
-    monitor.runAll();
+    monitor.runAll(true);
     return json(res, 202, { started: true });
   }
 

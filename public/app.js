@@ -136,9 +136,14 @@ function render() {
 
 function connect() {
   const es = new EventSource('/api/events');
-  es.onopen = () => { $('#live').classList.add('on'); $('#liveText').textContent = 'Live'; };
+  let lost;
+  es.onopen = () => { clearTimeout(lost); $('#live').classList.add('on'); $('#liveText').textContent = 'Live'; };
   es.onmessage = (e) => { data = JSON.parse(e.data); render(); };
-  es.onerror = () => { $('#live').classList.remove('on'); $('#liveText').textContent = 'Reconnecting…'; };
+  // the server recycles the stream every ~100 s; only show a problem if reconnecting takes a while
+  es.onerror = () => {
+    clearTimeout(lost);
+    lost = setTimeout(() => { $('#live').classList.remove('on'); $('#liveText').textContent = 'Reconnecting…'; }, 5000);
+  };
 }
 
 $('#filters').addEventListener('click', (e) => {

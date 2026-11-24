@@ -83,8 +83,19 @@ export class Monitor extends EventEmitter {
     this.timer = setInterval(() => this.runAll(), config.checkIntervalSec * 1000);
   }
 
-  async runAll() {
-    if (this.running) return;
+  // force=false (timer / cron) skips the run if the last one finished less than half an
+  // interval ago, so a cron job plus the built-in timer don't double-count failures.
+  runAll(force = false) {
+    if (this.current) return this.current;
+    if (!force && this.lastRunAt && Date.now() - this.lastRunAt < (config.checkIntervalSec * 1000) / 2) return Promise.resolve();
+    this.current = this.#runAll().finally(() => {
+      this.current = null;
+      this.lastRunAt = Date.now();
+    });
+    return this.current;
+  }
+
+  async #runAll() {
     this.running = true;
     const queue = [...this.sites];
     const events = [];

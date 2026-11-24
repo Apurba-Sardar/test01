@@ -8,7 +8,11 @@ const MAX_INCIDENTS = 300;
 export class Store {
   constructor(dataDir) {
     this.file = path.join(dataDir, 'state.json');
-    fs.mkdirSync(dataDir, { recursive: true });
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch (err) {
+      console.error(`[store] cannot create ${dataDir}: ${err.message} — history will not be saved`);
+    }
     this.sites = {}; // id -> runtime state
     this.incidents = []; // newest first
     try {
@@ -63,8 +67,12 @@ export class Store {
   flush() {
     if (!this.dirty) return;
     this.dirty = false;
-    const tmp = this.file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify({ sites: this.sites, incidents: this.incidents }));
-    fs.renameSync(tmp, this.file);
+    try {
+      const tmp = this.file + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify({ sites: this.sites, incidents: this.incidents }));
+      fs.renameSync(tmp, this.file);
+    } catch (err) {
+      console.error(`[store] cannot save ${this.file}: ${err.message}`);
+    }
   }
 }

@@ -23,6 +23,9 @@ export const config = {
   // Sent as the X-Status-Monitor header so a Cloudflare WAF rule can let the monitor through.
   monitorToken: process.env.MONITOR_TOKEN || '',
 
+  // Secret for GET /api/cron?token=… (external scheduler). Empty = endpoint disabled.
+  cronToken: process.env.CRON_TOKEN || '',
+
   dashboardUser: process.env.DASHBOARD_USER || '',
   dashboardPass: process.env.DASHBOARD_PASS || '',
   publicUrl: process.env.PUBLIC_URL || '',
