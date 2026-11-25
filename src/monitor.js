@@ -311,7 +311,10 @@ export class Monitor extends EventEmitter {
         const s = this.store.get(site.id);
         if (s.paused) continue;
         if (force || !s.health || Date.now() - s.health.checkedAt > config.healthIntervalHours * 3600000) await this.runHealth(site, false);
-        if (!s.da || Date.now() - s.da.checkedAt > config.daRefreshDays * 86400000) {
+        // refresh DA weekly; retry failures after 6 h; fetch at once when a token was just added
+        const daAge = s.da ? Date.now() - s.da.checkedAt : Infinity;
+        const daDue = !s.da || (s.da.noToken && config.mozToken) || daAge > (s.da.error ? 6 * 3600000 : config.daRefreshDays * 86400000);
+        if (daDue) {
           try { s.da = { ...(await fetchDomainAuthority(site.url)), prev: s.da?.value ?? s.da?.prev ?? null }; } catch (e) { s.da = { ...s.da, error: e.message, checkedAt: Date.now() }; }
           this.store.dirty = true;
           this.emit('update');
