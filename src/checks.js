@@ -292,9 +292,16 @@ const findKey = (obj, key) => {
   return undefined;
 };
 
+// Moz's free plan allows about one request every 10 seconds.
+let lastMozCall = 0;
+const MOZ_GAP_MS = 11000;
+
 export async function fetchDomainAuthority(url) {
-  if (!config.mozToken) return { error: 'Set MOZ_API_TOKEN to show DA', checkedAt: Date.now() };
+  if (!config.mozToken) return { error: 'Set MOZ_API_TOKEN to show DA', noToken: true, checkedAt: Date.now() };
   const domain = rootDomain(url);
+  const wait = lastMozCall + MOZ_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastMozCall = Date.now();
   const r = await fetch('https://api.moz.com/jsonrpc', {
     method: 'POST',
     signal: AbortSignal.timeout(20000),
