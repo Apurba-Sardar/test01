@@ -187,7 +187,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/outgoing-ip') return json(res, 200, { ip: await outgoingIp(true) });
 
     if (req.method === 'POST' && p === '/api/test-email') {
-      const r = await sendMail('✅ Test email from your status monitor', [
+      const r = await sendMail(`✅ Test email from ${config.appName}`, [
         'Email alerts are configured correctly.',
         { label: 'Sites monitored', value: String(monitor.sites.length) },
         { label: 'Sent by', value: user },

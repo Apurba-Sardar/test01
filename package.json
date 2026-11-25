@@ -9,8 +9,10 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },
-  "engines": { "node": ">=20.12" },
+  "engines": {
+    "node": ">=20.12"
+  },
   "dependencies": {
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^10.6.1"
   }
 }

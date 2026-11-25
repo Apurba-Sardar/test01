@@ -28,7 +28,7 @@ export async function sendMail(subject, lines) {
         : `<tr><td style="padding:4px 12px 4px 0;color:#666">${esc(l.label)}</td><td style="padding:4px 0">${esc(l.value)}</td></tr>`
     )
     .join('');
-  const link = config.publicUrl ? `<p><a href="${esc(config.publicUrl)}">Open status dashboard</a></p>` : '';
+  const link = config.publicUrl ? `<p><a href="${esc(config.publicUrl)}">Open ${esc(config.appName)}</a></p>` : '';
   const html = `<div style="font-family:system-ui,sans-serif;font-size:14px"><h2 style="margin:0 0 12px">${esc(subject)}</h2><table>${rows}</table>${link}</div>`;
   try {
     await transport.sendMail({ from: config.smtp.from, to: config.smtp.to.join(','), subject, text, html });
