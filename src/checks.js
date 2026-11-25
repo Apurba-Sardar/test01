@@ -186,7 +186,7 @@ export async function runHealthChecks(site, sslInfo) {
     const exp = (res.events || []).find((e) => e.eventAction === 'expiration')?.eventDate;
     if (!exp) return items.push(item('domain', 'Domain expiry', 'unknown', 'Registry does not publish an expiry date'));
     const days = Math.floor((new Date(exp) - Date.now()) / 86400000);
-    const it = item('domain', 'Domain expiry', days <= 7 ? 'fail' : days <= 30 ? 'warn' : 'pass', `${domain} expires ${exp.slice(0, 10)} (${days} days)`);
+    const it = { ...item('domain', 'Domain expiry', days <= 7 ? 'fail' : days <= 30 ? 'warn' : 'pass', `${domain} expires ${exp.slice(0, 10)} (${days} days)`), data: { domain, expires: exp, days } };
     domainCache.set(domain, { at: Date.now(), item: it });
     items.push(it);
   });

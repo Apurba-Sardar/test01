@@ -32,7 +32,7 @@ export const config = {
   mozToken: process.env.MOZ_API_TOKEN || '',
   daRefreshDays: num(process.env.DA_REFRESH_DAYS, 7),
 
-  appName: process.env.APP_NAME || 'Site Status',
+  appName: process.env.APP_NAME || 'TMJ Dashboard',
   // Optional extra secret for signing login cookies.
   sessionSecret: process.env.SESSION_SECRET || '',
 
