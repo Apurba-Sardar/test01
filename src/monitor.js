@@ -74,6 +74,8 @@ export class Monitor extends EventEmitter {
           timeoutMs: s.timeoutMs || config.timeoutMs,
           articleUrl: s.articleUrl === false ? false : s.articleUrl || '',
           pages: Array.isArray(s.pages) ? s.pages : [],
+          ads: !!s.ads,
+          dkimSelectors: Array.isArray(s.dkimSelectors) ? s.dkimSelectors : [],
         };
       });
     this.store.prune(seen);
@@ -345,7 +347,10 @@ export class Monitor extends EventEmitter {
   async runHealth(site, emit = true) {
     const s = this.store.get(site.id);
     const before = new Map((s.health?.items || []).map((i) => [i.key, i.status]));
-    s.health = await runHealthChecks(site, s.ssl);
+    const articleUrl = site.articleUrl || s.article?.url || null;
+    const { tagSeen, ...health } = await runHealthChecks(site, s.ssl, { articleUrl, tagSeen: s.tagSeen || {} });
+    s.health = health;
+    s.tagSeen = tagSeen;
     this.store.logHealth(site.id, s.health);
     this.store.dirty = true;
     const newlyFailed = s.health.items.filter((i) => i.status === 'fail' && before.has(i.key) && before.get(i.key) !== 'fail');

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { Store } from './store.js';
 import { Monitor } from './monitor.js';
-import { sendMail, mailEnabled } from './mailer.js';
+import { sendMail, mailEnabled, mailStatus, verifyMail, onMailAttempt } from './mailer.js';
 import * as auth from './auth.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,6 +56,7 @@ async function outgoingIp(refresh = false) {
 })();
 
 const store = new Store(config.dataDir, { retentionDays: config.logRetentionDays });
+onMailAttempt((e) => store.logMail(e));
 let storageCache = null;
 const storageStats = () => {
   if (!storageCache || Date.now() - storageCache.at > 60_000) storageCache = { at: Date.now(), v: store.stats() };
@@ -119,6 +120,22 @@ const snapshot = () => ({
     recipients: config.smtp.to.length,
     realertMinutes: config.realertMinutes,
     healthIntervalHours: config.healthIntervalHours,
+    mail: (() => {
+      const since30 = Date.now() - 30 * 86400000, since24 = Date.now() - 86400000;
+      const recent = store.mail.filter((m) => m.t > since30);
+      return {
+        ...mailStatus,
+        from: config.smtp.from ? config.smtp.from.replace(/^.*<|>.*$/g, '') : '',
+        host: config.smtp.host || '',
+        last: store.mail[0] || null,
+        lastOk: store.mail.find((m) => m.ok) || null,
+        lastFail: store.mail.find((m) => !m.ok) || null,
+        sent30: recent.filter((m) => m.ok).length,
+        failed30: recent.filter((m) => !m.ok).length,
+        failed24: store.mail.filter((m) => m.t > since24 && !m.ok).length,
+        recent: store.mail.slice(0, 10),
+      };
+    })(),
     cronEnabled: !!config.cronToken,
     sslWarnDays: config.sslWarnDays,
     healthRunning: !!monitor.healthRunning,
@@ -282,6 +299,18 @@ const server = http.createServer(async (req, res) => {
       for (const i of rows.reverse()) csvRow(res, [iso(i.t), i.name, i.page || '', i.to, i.detail]);
       return res.end();
     }
+    if (p === '/api/export/mail.csv') {
+      startCsv(res, 'tmj-alert-emails.csv', ['time_utc', 'subject', 'result', 'error', 'recipients']);
+      const rows = [];
+      for await (const m of store.readLog('mail.ndjson')) rows.push(m);
+      for (const m of rows.reverse()) csvRow(res, [iso(m.t), m.subject, m.ok ? 'sent' : 'failed', m.error, m.to]);
+      return res.end();
+    }
+    if (req.method === 'POST' && p === '/api/mail/verify') {
+      await verifyMail();
+      monitor.emit('update');
+      return json(res, 200, mailStatus);
+    }
     if (p === '/api/export/da.csv') {
       startCsv(res, 'tmj-domain-authority.csv', ['time_utc', 'site', 'domain_authority', 'spam_score']);
       for await (const r of store.readLog('da.ndjson')) csvRow(res, [iso(r.t), monitor.sites.find((s) => s.id === r.site)?.name || r.site, r.da, r.spam]);
@@ -329,6 +358,8 @@ server.listen(config.port, () => {
   if (!config.dashboardUser) console.log('Warning: DASHBOARD_USER/DASHBOARD_PASS not set — dashboard is open to anyone who can reach it');
   if (!config.mozToken) console.log('Domain Authority: disabled (set MOZ_API_TOKEN to enable)');
   monitor.start();
+  verifyMail().then(() => monitor.emit('update'));
+  setInterval(() => verifyMail().then(() => monitor.emit('update')), 6 * 3600000).unref();
   outgoingIp().then((ip) => console.log(`Outgoing IP (allow this in Cloudflare): ${ip ?? 'unknown'}`));
 });
 

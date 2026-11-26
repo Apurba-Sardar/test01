@@ -4,17 +4,19 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 
 const UA = 'InternalStatusMonitor/1.0';
+// Ad networks (Ezoic, etc.) and some tag setups only add their code for real browsers, so tag checks look like one.
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
 
 const CHALLENGE = ['Attention Required! | Cloudflare', '<title>Just a moment...</title>', 'challenge-platform', 'cf-chl-'];
 const challenged = (res, body = '') =>
   res.headers.get('cf-mitigated') === 'challenge' || ([403, 429, 503].includes(res.status) && CHALLENGE.some((m) => body.includes(m)));
 
-async function get(url, { redirect = 'follow', timeout = 15000, method = 'GET' } = {}) {
+async function get(url, { redirect = 'follow', timeout = 15000, method = 'GET', ua = UA } = {}) {
   const res = await fetch(url, {
     method,
     redirect,
     signal: AbortSignal.timeout(timeout),
-    headers: { 'user-agent': UA, ...(config.monitorToken ? { 'x-status-monitor': config.monitorToken } : {}) },
+    headers: { 'user-agent': ua, ...(ua === BROWSER_UA ? { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'en-US,en;q=0.9' } : {}), ...(config.monitorToken ? { 'x-status-monitor': config.monitorToken } : {}) },
   });
   const body = method === 'HEAD' || redirect === 'manual' ? '' : await res.text();
   return { res, body, blocked: challenged(res, body) };
@@ -135,7 +137,7 @@ async function rdapBase(domain) {
 
 // ---------- health checks ----------
 
-export async function runHealthChecks(site, sslInfo) {
+export async function runHealthChecks(site, sslInfo, { articleUrl = null, tagSeen = {} } = {}) {
   const base = origin(site.url);
   const items = [];
   const safe = async (fn) => { try { await fn(); } catch (e) { /* recorded by fn when possible */ } };
@@ -260,6 +262,13 @@ export async function runHealthChecks(site, sslInfo) {
     });
   }
 
+  // 11–13. Analytics tags, ad scripts and ads.txt
+  const tracking = await trackingChecks(site, home, homeBlocked, articleUrl, tagSeen);
+  items.push(...tracking.items);
+
+  // 14–17. Domain email setup (MX, SPF, DMARC, DKIM)
+  items.push(...(await emailChecks(site)));
+
   // 9–10. WordPress specifics
   if (site.type === 'wordpress') {
     await safe(async () => {
@@ -280,7 +289,7 @@ export async function runHealthChecks(site, sslInfo) {
     });
   }
 
-  return { checkedAt: Date.now(), items };
+  return { checkedAt: Date.now(), items, tags: tracking.tags, tagSeen: tracking.tagSeen };
 }
 
 // ---------- Moz Domain Authority ----------
@@ -314,4 +323,188 @@ export async function fetchDomainAuthority(url) {
   const spam = findKey(j.result, 'spam_score');
   if (typeof da !== 'number') return { error: 'Moz response had no domain_authority', checkedAt: Date.now() };
   return { value: Math.round(da), spamScore: typeof spam === 'number' ? spam : null, domain, checkedAt: Date.now() };
+}
+
+
+// ---------- analytics & ads ----------
+
+const TAG_MEMORY_MS = 7 * 86400000; // a tag seen in the last 7 days is expected to still be there
+const AD_NETWORKS = [
+  // name, how to recognise it, script host to test-load
+  ['Google AdSense', /pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js|adsbygoogle/i, /pagead2\.googlesyndication\.com/],
+  ['Google Ad Manager', /securepubads\.g\.doubleclick\.net|googletag\.pubads\(/i, /securepubads\.g\.doubleclick\.net/],
+  ['Ezoic', /ezojs\.com|ezoic\.net|ezodn\.com|ezoicAnalytics|ezstandalone/i, /ezojs\.com|ezoic\.net|ezodn\.com/],
+  ['Mediavine', /scripts\.mediavine\.com/i, /scripts\.mediavine\.com/],
+  ['Raptive', /ads\.adthrive\.com|raptive/i, /ads\.adthrive\.com/],
+  ['Taboola', /cdn\.taboola\.com/i, /cdn\.taboola\.com/],
+  ['Outbrain', /widgets\.outbrain\.com/i, /widgets\.outbrain\.com/],
+  ['Monumetric', /monu\.delivery/i, /monu\.delivery/],
+  ['Freestar', /a\.pub\.network/i, /a\.pub\.network/],
+  ['Media.net', /contextual\.media\.net/i, /contextual\.media\.net/],
+  ['Amazon Publisher Services', /c\.amazon-adsystem\.com/i, /c\.amazon-adsystem\.com/],
+  ['Adnimation', /adncdn\.net|adnimation\.com/i, /adncdn\.net|adnimation\.com/],
+  ['AdPushup', /cdn\.adpushup\.com/i, /cdn\.adpushup\.com/],
+  ['Playwire', /cdn\.intergient\.com|playwire/i, /cdn\.intergient\.com/],
+  ['Snigel', /cdn\.snigelweb\.com/i, /cdn\.snigelweb\.com/],
+  ['Setupad', /stpd\.cloud|setupad/i, /stpd\.cloud/],
+  ['Clickio', /clickiocdn\.com/i, /clickiocdn\.com/],
+  ['Primis', /live\.primis\.tech/i, /live\.primis\.tech/],
+  ['Sortable', /tags\.deployads\.com/i, /tags\.deployads\.com/],
+];
+
+/** Find GA4 / GTM / ad networks in the homepage, the article page and the site's own JS bundles. */
+async function trackingChecks(site, home, homeBlocked, articleUrl, tagSeen) {
+  const items = [];
+  const now = Date.now();
+  const seenPrev = { ...tagSeen };
+  if (homeBlocked) {
+    const u = (k, n) => item(k, n, 'unknown', home ? BLOCKED : 'Homepage did not load');
+    return { items: [u('analytics', 'Analytics tag'), u('ads', 'Ad scripts')], tags: null, tagSeen: seenPrev };
+  }
+  // sources: homepage + article HTML (fetched as a browser) + up to 3 same-origin JS bundles (for app-style sites
+  // that inject tags in JS)
+  try { const hb = await get(site.url, { ua: BROWSER_UA }); if (hb.res.ok && !hb.blocked) home = hb; } catch {}
+  const sources = [home.body];
+  if (articleUrl) { try { const a = await get(articleUrl, { ua: BROWSER_UA }); if (a.res.ok && !a.blocked) sources.push(a.body); } catch {} }
+  const scriptUrls = [...home.body.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)].map((m) => { try { return new URL(m[1].replace(/&amp;/g, '&'), home.res.url); } catch { return null; } }).filter(Boolean);
+  for (const u of scriptUrls.filter((u) => u.origin === new URL(home.res.url).origin && /\.m?js($|\?)/.test(u.pathname + u.search)).slice(0, 3)) {
+    try { const r = await get(u.href, { timeout: 20000, ua: BROWSER_UA }); if (r.res.ok) sources.push(r.body.slice(0, 4_000_000)); } catch {}
+  }
+  const all = sources.join('\n');
+  const hasGtagContext = /gtag|googletagmanager|google-analytics/i.test(all);
+  const ga4 = hasGtagContext ? [...new Set([...all.matchAll(/['"=\s(,](G-[A-Z0-9]{8,12})\b/g)].map((m) => m[1]))] : [];
+  const gtm = [...new Set([...all.matchAll(/\b(GTM-[A-Z0-9]{5,9})\b/g)].map((m) => m[1]))];
+  const ads = AD_NETWORKS.filter(([, re]) => re.test(all)).map(([n]) => n);
+  const pubIds = [...new Set([...all.matchAll(/\bca-(pub-\d{10,20})\b/g)].map((m) => m[1]))];
+  // IDs used to actually serve AdSense ads (script client= / data-ad-client); others are e.g. the site-verification meta tag
+  const servingPubIds = [...new Set([...all.matchAll(/(?:client=|data-ad-client=["']|google_ad_client\s*[:=]\s*["'])ca-(pub-\d{10,20})/g)].map((m) => m[1]))];
+
+  // remember what we saw; anything seen in the last 7 days but missing now is a regression
+  const found = [...ga4.map((x) => `ga:${x}`), ...gtm.map((x) => `gtm:${x}`), ...ads.map((x) => `ads:${x}`)];
+  const tagSeenNext = Object.fromEntries(Object.entries(seenPrev).filter(([, t]) => now - t < TAG_MEMORY_MS));
+  for (const k of found) tagSeenNext[k] = now;
+  const missing = Object.keys(seenPrev).filter((k) => now - seenPrev[k] < TAG_MEMORY_MS && !found.includes(k));
+
+  // test-load the tag scripts themselves
+  const loadCheck = async (url) => { try { const r = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'user-agent': BROWSER_UA } }); await r.arrayBuffer(); return r.ok ? null : `HTTP ${r.status}`; } catch (e) { return e.message; } };
+  const gaProblems = [];
+  for (const id of ga4.slice(0, 2)) { const e = await loadCheck(`https://www.googletagmanager.com/gtag/js?id=${id}`); if (e) gaProblems.push(`${id} script not loading (${e})`); }
+  for (const id of gtm.slice(0, 2)) { const e = await loadCheck(`https://www.googletagmanager.com/gtm.js?id=${id}`); if (e) gaProblems.push(`${id} container not loading (${e}) — is it published?`); }
+  const adProblems = [];
+  for (const [name, , host] of AD_NETWORKS.filter(([n]) => ads.includes(n))) {
+    const src = scriptUrls.find((u) => host.test(u.hostname));
+    if (!src) continue; // loaded dynamically; presence was detected in the code
+    const e = await loadCheck(src.href);
+    if (e) adProblems.push(`${name} script not loading (${e})`);
+  }
+
+  // Analytics item
+  const gaMissing = missing.filter((k) => k.startsWith('ga:') || k.startsWith('gtm:')).map((k) => k.split(':')[1]);
+  const gaFound = [...ga4, ...gtm];
+  items.push(
+    gaMissing.length ? item('analytics', 'Analytics tag', 'fail', `Tag disappeared: ${gaMissing.join(', ')} (was on the site in the last 7 days)`)
+    : gaProblems.length ? item('analytics', 'Analytics tag', 'fail', gaProblems.join('; '))
+    : gaFound.length ? item('analytics', 'Analytics tag', 'pass', `${gaFound.join(', ')} · loading`)
+    : item('analytics', 'Analytics tag', 'warn', 'No Google Analytics 4 or Tag Manager tag found')
+  );
+
+  // Ads item (sites.json "ads": true means the site must have ads)
+  const adMissing = missing.filter((k) => k.startsWith('ads:')).map((k) => k.split(':')[1]);
+  items.push(
+    adMissing.length ? item('ads', 'Ad scripts', 'fail', `Ad code disappeared: ${adMissing.join(', ')} (was on the site in the last 7 days)`)
+    : adProblems.length ? item('ads', 'Ad scripts', 'fail', adProblems.join('; '))
+    : ads.length ? item('ads', 'Ad scripts', 'pass', `${ads.join(', ')}${pubIds.length ? ` · ${pubIds.join(', ')}` : ''} · loading`)
+    : site.ads ? item('ads', 'Ad scripts', 'fail', 'No ad network code found, but this site is set to have ads')
+    : item('ads', 'Ad scripts', 'pass', 'No ad networks on this site')
+  );
+
+  // ads.txt — required for ad networks to pay for impressions
+  let adsTxt = null;
+  const expectAds = ads.length || adMissing.length || site.ads;
+  try {
+    const { res, body, blocked } = await get(new URL('/ads.txt', home.res.url).href);
+    const valid = res.ok && !blocked && !/<html/i.test(body.slice(0, 500)) && /,\s*(DIRECT|RESELLER)/i.test(body);
+    if (blocked) { if (expectAds) items.push(item('adstxt', 'ads.txt', 'unknown', BLOCKED)); }
+    else if (!valid) { if (expectAds) items.push(item('adstxt', 'ads.txt', 'fail', `ads.txt missing (HTTP ${res.status}) — ad networks may not pay for impressions`)); }
+    else {
+      const lines = body.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('#') && l.includes(',')).length;
+      const manager = body.match(/^\s*MANAGERDOMAIN\s*=\s*([^\s#]+)/im)?.[1] || null;
+      const listed = (id) => body.toLowerCase().includes(id.toLowerCase());
+      const missingServing = servingPubIds.filter((id) => !listed(id));
+      const missingOther = pubIds.filter((id) => !servingPubIds.includes(id) && !listed(id));
+      adsTxt = { lines, manager, url: res.url };
+      const via = `${lines} seller line${lines === 1 ? '' : 's'}${manager ? ` · managed by ${manager}` : ''}`;
+      items.push(
+        missingServing.length ? item('adstxt', 'ads.txt', 'fail', `ads.txt (${via}) doesn't list ${missingServing.join(', ')}, which serves AdSense ads on this site — those impressions may not be paid`)
+        : missingOther.length ? item('adstxt', 'ads.txt', 'warn', `${via} · AdSense account ${missingOther.join(', ')} (site verification tag) isn't listed — add "google.com, ${missingOther[0]}, DIRECT, f08c47fec0942fa0" if AdSense ads run directly`)
+        : item('adstxt', 'ads.txt', 'pass', via)
+      );
+      // a monetised site (has ads.txt) where no ad code shows up: ads may not be loading
+      if (!ads.length && !adMissing.length) {
+        const i = items.findIndex((x) => x.key === 'ads');
+        items[i] = item('ads', 'Ad scripts', 'warn', `ads.txt is set up (${via}) but no ad code was found on the site — check that ads are loading`);
+      }
+    }
+  } catch (e) { if (expectAds) items.push(item('adstxt', 'ads.txt', 'unknown', e.message)); }
+  return { items, tags: { ga4, gtm, ads, pubIds, adsTxt, checkedAt: now }, tagSeen: tagSeenNext };
+}
+
+// ---------- domain email setup (DNS over HTTPS, cached 6 h per domain) ----------
+
+const emailCache = new Map();
+const DKIM_SELECTORS = ['google', 'default', 'selector1', 'selector2', 'k1', 'k2', 's1', 's2', 'mail', 'dkim', 'smtp', 'hostingermail-a', 'hostingermail-b', 'hostingermail-c', 'hostingermail1', 'titan1', 'zmail', 'zoho', 'mxvault', 'protonmail', 'fm1', 'mandrill', 'resend', 'everlytickey1', 'cm'];
+
+async function doh(name, type) {
+  const typeNum = { MX: 15, TXT: 16 }[type];
+  for (const u of [`https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${type}`, `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`]) {
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(8000), headers: { accept: 'application/dns-json' } });
+      if (!r.ok) continue;
+      const j = await r.json();
+      return (j.Answer || []).filter((a) => a.type === typeNum).map((a) => (type === 'TXT' ? a.data.replace(/"\s+"/g, '').replace(/^"|"$/g, '') : a.data));
+    } catch {}
+  }
+  return null; // lookup failed
+}
+
+async function emailChecks(site) {
+  const domain = rootDomain(site.url);
+  const cached = emailCache.get(domain);
+  if (cached && Date.now() - cached.at < 6 * 3600000) return cached.items;
+  const items = [];
+  const [mx, txt, dmarc] = await Promise.all([doh(domain, 'MX'), doh(domain, 'TXT'), doh(`_dmarc.${domain}`, 'TXT')]);
+  if (mx === null || txt === null) {
+    const u = (k, n) => item(k, n, 'unknown', 'DNS lookup failed');
+    return [u('mx', 'Email: MX records'), u('spf', 'Email: SPF'), u('dmarc', 'Email: DMARC'), u('dkim', 'Email: DKIM')];
+  }
+  const hosts = mx.map((m) => m.split(' ').pop().replace(/\.$/, '')).filter(Boolean);
+  const provider = hosts.some((h) => /google|googlemail/i.test(h)) ? 'Google Workspace' : hosts.some((h) => /outlook|protection\.outlook/i.test(h)) ? 'Microsoft 365' : hosts.some((h) => /hostinger/i.test(h)) ? 'Hostinger Mail' : hosts.some((h) => /zoho/i.test(h)) ? 'Zoho Mail' : hosts.some((h) => /titan/i.test(h)) ? 'Titan' : hosts[0] || '';
+  items.push(hosts.length ? item('mx', 'Email: MX records', 'pass', `${provider}${provider !== hosts[0] ? ` (${hosts.length} server${hosts.length > 1 ? 's' : ''})` : ''}`) : item('mx', 'Email: MX records', 'warn', `${domain} has no MX records — it can't receive email`));
+
+  const spf = txt.filter((t) => /^v=spf1\b/i.test(t));
+  items.push(
+    !spf.length ? item('spf', 'Email: SPF', hosts.length ? 'fail' : 'warn', `No SPF record — email from ${domain} is likely to land in spam`)
+    : spf.length > 1 ? item('spf', 'Email: SPF', 'fail', `${spf.length} SPF records — only one is allowed, so SPF fails`)
+    : /\+all\b/.test(spf[0]) ? item('spf', 'Email: SPF', 'fail', 'SPF ends in +all, which lets anyone send as this domain')
+    : /\?all\b/.test(spf[0]) || !/[~-]all\b/.test(spf[0]) ? item('spf', 'Email: SPF', 'warn', `SPF is weak: ${spf[0].slice(0, 90)}`)
+    : item('spf', 'Email: SPF', 'pass', spf[0].slice(0, 110))
+  );
+
+  const dm = (dmarc || []).find((t) => /^v=DMARC1/i.test(t));
+  const policy = dm?.match(/\bp=(\w+)/i)?.[1]?.toLowerCase();
+  items.push(
+    !dm ? item('dmarc', 'Email: DMARC', 'warn', `No DMARC record at _dmarc.${domain} — Gmail and Yahoo expect one for bulk senders`)
+    : policy === 'none' ? item('dmarc', 'Email: DMARC', 'warn', 'DMARC policy is p=none (monitoring only, no protection against spoofing)')
+    : item('dmarc', 'Email: DMARC', 'pass', `Policy p=${policy}${/rua=/i.test(dm) ? ' · reports enabled' : ''}`)
+  );
+
+  const selectors = [...new Set([...(site.dkimSelectors || []), ...DKIM_SELECTORS])];
+  const found = [];
+  await Promise.all(selectors.map(async (sel) => { const r = await doh(`${sel}._domainkey.${domain}`, 'TXT'); if (r?.some((t) => /v=DKIM1|k=rsa|p=/i.test(t))) found.push(sel); }));
+  items.push(found.length
+    ? item('dkim', 'Email: DKIM', 'pass', `Key found for selector${found.length > 1 ? 's' : ''} ${found.sort().join(', ')}`)
+    : item('dkim', 'Email: DKIM', hosts.length ? 'warn' : 'unknown', `No DKIM key at common selectors${hosts.length ? ' — add "dkimSelectors" for this site in sites.json if it uses a custom one' : ''}`));
+
+  emailCache.set(domain, { at: Date.now(), items });
+  return items;
 }

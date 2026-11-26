@@ -13,6 +13,28 @@ if (config.smtp.host) {
 
 export const mailEnabled = () => !!(transport && config.smtp.to.length);
 
+// Live status of the alert-email setup, shown on the dashboard.
+export const mailStatus = { verified: null, verifyError: null, verifiedAt: null };
+let onSent = () => {};
+/** Register a callback that receives every send attempt: { t, subject, ok, error }. */
+export const onMailAttempt = (fn) => (onSent = fn);
+
+/** Log in to the SMTP server without sending anything (checks host, port and password). */
+export async function verifyMail() {
+  if (!transport) {
+    Object.assign(mailStatus, { verified: null, verifyError: 'SMTP is not configured', verifiedAt: Date.now() });
+    return mailStatus;
+  }
+  try {
+    await transport.verify();
+    Object.assign(mailStatus, { verified: true, verifyError: null, verifiedAt: Date.now() });
+  } catch (err) {
+    Object.assign(mailStatus, { verified: false, verifyError: err.message, verifiedAt: Date.now() });
+    console.error(`[mail] SMTP login check failed: ${err.message}`);
+  }
+  return mailStatus;
+}
+
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 export async function sendMail(subject, lines) {
@@ -33,9 +55,12 @@ export async function sendMail(subject, lines) {
   try {
     await transport.sendMail({ from: config.smtp.from, to: config.smtp.to.join(','), subject, text, html });
     console.log(`[mail sent] ${subject}`);
+    onSent({ t: Date.now(), subject, ok: true, to: config.smtp.to.length });
+    Object.assign(mailStatus, { verified: true, verifyError: null, verifiedAt: Date.now() });
     return { sent: true };
   } catch (err) {
     console.error(`[mail error] ${subject}: ${err.message}`);
+    onSent({ t: Date.now(), subject, ok: false, error: err.message });
     return { error: err.message };
   }
 }
