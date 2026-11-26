@@ -16,6 +16,14 @@ const EVENT_LABEL = { down: 'Down', up: 'Recovered', degraded: 'Slow', blocked: 
 const CHECK_COLS = [
   ['https', 'HTTPS redirect'], ['ssl', 'SSL'], ['domain', 'Domain expiry'], ['robots', 'robots.txt'], ['sitemap', 'Sitemap'],
   ['index', 'Indexable'], ['meta', 'Title & meta'], ['assets', 'CSS / JS'], ['wpapi', 'WP REST API'], ['feed', 'RSS feed'],
+  ['analytics', 'Analytics'], ['ads', 'Ad scripts'], ['adstxt', 'ads.txt'],
+  ['mx', 'Email MX'], ['spf', 'SPF'], ['dmarc', 'DMARC'], ['dkim', 'DKIM'],
+];
+const CHECK_GROUPS = [
+  ['Website', ['https', 'ssl', 'domain', 'assets', 'wpapi', 'feed']],
+  ['SEO', ['robots', 'sitemap', 'index', 'meta']],
+  ['Analytics & ads', ['analytics', 'ads', 'adstxt']],
+  ['Domain email', ['mx', 'spf', 'dmarc', 'dkim']],
 ];
 const AVATAR = ['#4f46e5', '#0891b2', '#db2777', '#ea580c', '#059669', '#7c3aed', '#ca8a04', '#2563eb'];
 const svg = (d, extra = '') => `<svg class="i" viewBox="0 0 24 24" ${extra}>${d}</svg>`;
@@ -422,7 +430,10 @@ VIEWS.overview = {
     for (const s of slow) items.push(['y', I.clock, `${s.name} is slow`, `${s.responseTime} ms response`, s.id]);
     for (const s of sites) if (s.ssl?.daysLeft != null && s.ssl.daysLeft <= (meta.sslWarnDays || 14)) items.push(['y', I.lock, `${s.name}: SSL expires in ${s.ssl.daysLeft} days`, fmtDate(s.ssl.validTo), s.id]);
     for (const s of sites) { const d = domainInfo(s); if (d && d.days <= 30) items.push(['y', I.globe, `${d.domain} expires in ${d.days} days`, 'Renew the domain', s.id]); }
+    const ml = meta.mail || {};
     if (!meta.mailEnabled) items.push(['b', I.mail, 'Email alerts are off', 'Set the SMTP_* variables in Hostinger', null, '#/settings']);
+    else if (ml.verified === false) items.unshift(['r', I.mail, 'Alert emails can’t be sent', `Gmail login failed: ${ml.verifyError}`, null, '#/settings']);
+    else if (ml.last && !ml.last.ok) items.unshift(['r', I.mail, 'Last alert email failed', `${ml.last.error} · ${ago(ml.last.t)}`, null, '#/settings']);
     if (!meta.mozEnabled) items.push(['b', I.plug, 'Domain Authority not connected', 'Add MOZ_API_TOKEN to show DA scores', null, '#/settings']);
     $('#ovAttnN').textContent = items.length ? `${items.length} item${items.length > 1 ? 's' : ''}` : '';
     $('#ovAttn').innerHTML = items.length
@@ -627,13 +638,17 @@ function renderRecord() {
             ${p.status !== 'up' && p.error ? `<span style="display:block;color:${p.status === 'down' ? 'var(--down)' : 'var(--warn)'}">${esc(p.error)}</span>` : ''}</div></li>`).join('')}</ul></section>
       </div>
       <section class="card"><div class="card-h"><h3>Uptime · last 30 days</h3><span class="legend-inline"><span><i style="background:var(--up-bar)"></i>≥ 99.9%</span><span><i style="background:var(--warn)"></i>≥ 99%</span><span><i style="background:var(--down)"></i>&lt; 99%</span><span><i style="background:var(--border)"></i>No data</span></span></div>
-        <div class="card-b"><div class="strip" id="strip"></div><div class="strip-legend"><span>30 days ago</span><span>${pct(s.uptime30d)} overall</span><span>Today</span></div></div></section>`;
+        <div class="card-b"><div class="strip" id="strip"></div><div class="strip-legend"><span>30 days ago</span><span>${pct(s.uptime30d)} overall</span><span>Today</span></div></div></section>
+      ${trackingCard(s)}`;
     drawChart(s);
     drawStrip(s);
   } else if (recTab === 'health') {
     body.innerHTML = `<section class="card"><div class="card-h"><h3>Health &amp; SEO checks</h3><span class="sub">${s.health ? `Last run ${ago(s.health.checkedAt)} · every ${data.meta.healthIntervalHours}h` : 'Not run yet'}</span></div>
-      ${s.health ? `<ul class="checks">${s.health.items.map((i) => `<li><span class="hic ${i.status}">${{ pass: I.check, warn: I.alert, fail: I.x, unknown: I.q }[i.status]}</span><span class="cn">${esc(i.name)}</span><span class="cd">${esc(i.detail)}</span></li>`).join('')}</ul>`
-        : '<div class="empty">Health checks run shortly after startup and then every few hours. Click “Run health checks” to run them now.</div>'}</section>`;
+      ${s.health ? CHECK_GROUPS.map(([g, keys]) => {
+          const list = s.health.items.filter((i) => keys.includes(i.key));
+          return list.length ? `<div class="grp-h">${g}</div><ul class="checks">${list.map((i) => `<li><span class="hic ${i.status}">${{ pass: I.check, warn: I.alert, fail: I.x, unknown: I.q }[i.status]}</span><span class="cn">${esc(i.name.replace(/^Email: /, ''))}</span><span class="cd">${esc(i.detail)}</span></li>`).join('')}</ul>` : '';
+        }).join('')
+        : '<div class="empty">Health checks run shortly after startup and then every hour. Click “Run health checks” to run them now.</div>'}</section>`;
   } else if (recTab === 'activity') {
     body.innerHTML = `<section class="card"><div class="card-h"><h3>Activity</h3><span class="sub">outages, recoveries, health changes</span></div><ul class="feed">${(s.incidents || []).length ? s.incidents.map(feedItem).join('') : '<li><span class="d">No activity yet.</span></li>'}</ul></section>`;
   } else {
@@ -648,6 +663,25 @@ function renderRecord() {
       <div class="k">Edit</div><div>Change sites in <a href="https://github.com/Apurba-Sardar/test01/blob/main/sites.json" target="_blank" rel="noopener">sites.json on GitHub</a> — Hostinger redeploys automatically.</div>
     </div></section>`;
   }
+}
+
+function trackingCard(s) {
+  const t = s.health?.tags;
+  const get = (k) => checkItem(s, k);
+  const row = (label, it, body) => `<li><span class="a-ic ${!it ? '' : it.status === 'pass' ? 'g' : it.status === 'fail' ? 'r' : 'y'}">${!it ? I.q : it.status === 'pass' ? I.check : it.status === 'fail' ? I.x : I.alert}</span><div style="min-width:0"><b>${label}</b><span style="display:block">${body}</span></div></li>`;
+  const email = ['mx', 'spf', 'dmarc', 'dkim'].map(get).filter(Boolean);
+  const emailWorst = email.find((i) => i.status === 'fail') || email.find((i) => i.status === 'warn') || email[0];
+  return `<div class="grid g-2" style="margin-top:18px">
+    <section class="card"><div class="card-h"><h3>Analytics &amp; ads</h3><span class="sub">${t ? `checked ${ago(t.checkedAt)}` : 'after health checks'}</span></div><ul class="attn">
+      ${row('Google Analytics / Tag Manager', get('analytics'), t ? (t.ga4.length || t.gtm.length ? [...t.ga4, ...t.gtm].map((x) => `<span class="code">${esc(x)}</span>`).join(' ') : esc(get('analytics')?.detail || 'None found')) : esc(get('analytics')?.detail || 'Pending'))}
+      ${row('Ad networks', get('ads'), t ? (t.ads.length ? t.ads.map(esc).join(', ') + (t.pubIds.length ? ` · <span class="code">${esc(t.pubIds.join(', '))}</span>` : '') : 'None on this site') : esc(get('ads')?.detail || 'Pending'))}
+      ${get('adstxt') ? row('ads.txt', get('adstxt'), esc(get('adstxt').detail)) : ''}
+      ${['analytics', 'ads'].map(get).filter((i) => i && i.status === 'fail').map((i) => `<li><span class="a-ic r">${I.alert}</span><div><b>Problem</b><span style="display:block;color:var(--down)">${esc(i.detail)}</span></div></li>`).join('')}
+    </ul></section>
+    <section class="card"><div class="card-h"><h3>Domain email</h3><span class="sub">MX · SPF · DMARC · DKIM</span></div><ul class="attn">
+      ${email.length ? email.map((i) => row(i.name.replace(/^Email: /, ''), i, esc(i.detail))).join('') : row('Email setup', null, 'Pending — runs with the health checks')}
+    </ul></section>
+  </div>`;
 }
 
 // ---------------------------------------------------------------- response-time chart (single series, hover crosshair)
@@ -835,8 +869,12 @@ VIEWS.health = {
       kpi('Warnings', tot.warn, 'worth a look', I.alert, tot.warn ? 'y' : '') +
       kpi('Failing', tot.fail, tot.fail ? '<span class="bad">fix these first</span>' : '<span class="good">none</span>', I.x, tot.fail ? 'r' : '') +
       kpi('Unknown', tot.unknown, 'blocked or unreachable', I.q);
-    const cols = CHECK_COLS.filter(([k]) => sites.some((s) => checkItem(s, k)));
-    $('#hMatrix').innerHTML = `<table class="tbl matrix"><thead><tr><th>Website</th>${cols.map(([, l]) => `<th class="c">${l}</th>`).join('')}</tr></thead><tbody>
+    const label = Object.fromEntries(CHECK_COLS);
+    const groups = CHECK_GROUPS.map(([g, keys]) => [g, keys.filter((k) => sites.some((s) => checkItem(s, k)))]).filter(([, k]) => k.length);
+    const cols = groups.flatMap(([, keys]) => keys.map((k) => [k, label[k] || k]));
+    $('#hMatrix').innerHTML = `<table class="tbl matrix"><thead>
+      <tr class="grp"><th></th>${groups.map(([g, keys]) => `<th class="c" colspan="${keys.length}">${g}</th>`).join('')}</tr>
+      <tr><th>Website</th>${cols.map(([, l]) => `<th class="c">${l}</th>`).join('')}</tr></thead><tbody>
       ${sites.map((s) => `<tr class="click" data-href="#/sites/${encodeURIComponent(s.id)}"><td><div class="ent">${avatar(s)}<div><b>${esc(s.name)}</b><span class="u">${s.health ? `checked ${ago(s.health.checkedAt)}` : 'pending'}</span></div></div></td>
         ${cols.map(([k, l]) => {
           const it = checkItem(s, k);
@@ -1007,7 +1045,7 @@ VIEWS.settings = {
   mount() {
     return `
       <div class="page-head"><div><h2>Settings &amp; alerts</h2><p>How TMJ Dashboard is configured. Values come from environment variables in Hostinger.</p></div>
-        <div class="acts"><button class="btn" id="sIp">${I.copy}Copy outgoing IP</button><button class="btn primary" id="sMail">${I.mail}Send test email</button></div></div>
+        <div class="acts"><button class="btn" id="sIp">${I.copy}Copy outgoing IP</button><button class="btn" id="sVerify">${I.refresh}Check Gmail login</button><button class="btn primary" id="sMail">${I.mail}Send test email</button></div></div>
       <div class="grid g-2">
         <section class="card"><div class="card-h"><h3>${I.pulse}Monitoring</h3></div><div class="kv" id="sMon"></div></section>
         <section class="card"><div class="card-h"><h3>${I.mail}Email alerts</h3></div><div class="kv" id="sMailKv"></div></section>
@@ -1023,6 +1061,7 @@ VIEWS.settings = {
           <a class="btn" href="/api/export/incidents.csv" download>${I.download}All incidents (CSV)</a>
           <a class="btn" href="/api/export/health.csv" download>${I.download}Health history (CSV)</a>
           <a class="btn" href="/api/export/da.csv" download>${I.download}DA history (CSV)</a>
+          <a class="btn" href="/api/export/mail.csv" download>${I.download}Email log (CSV)</a>
         </div>
       </section>
       <section class="card"><div class="card-h"><h3>${I.info}How to change settings</h3></div><div class="card-b" style="color:var(--text-2)">
@@ -1036,6 +1075,10 @@ VIEWS.settings = {
       const r = await api('/api/test-email', { method: 'POST' });
       toast(r.sent ? 'Test email sent ✔' : r.skipped ? 'Email is not configured — set the SMTP_* variables' : `Email failed: ${r.error}`);
     });
+    $('#sVerify').onclick = (e) => busy(e.currentTarget, async () => {
+      const r = await api('/api/mail/verify', { method: 'POST' });
+      toast(r.verified ? 'Gmail login OK ✔' : r.verifyError ? `Login failed: ${r.verifyError}` : 'Email is not configured');
+    });
     $('#dlDays').onchange = (e) => ($('#dlChecks').href = `/api/export/checks.csv?days=${e.target.value}`);
     api('/api/storage').then((st) => {
       const size = st.bytes > 1048576 ? `${(st.bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(st.bytes / 1024))} KB`;
@@ -1046,7 +1089,7 @@ VIEWS.settings = {
         ['Size on disk', `${size} · ${st.files} files`],
         ['History since', fmtD(st.historySince)],
         ['Detailed check log', `${st.logDays} day${st.logDays === 1 ? '' : 's'} stored${st.oldestLog ? ` (from ${fmtD(st.oldestLog)})` : ''} · kept ${st.retentionDays ? st.retentionDays + ' days' : 'forever'} <span class="muted">(LOG_RETENTION_DAYS)</span>`],
-        ['Kept forever', `Daily uptime totals · ${st.incidents} events · ${st.healthRuns} health runs · ${st.daReadings} DA readings`],
+        ['Kept forever', `Daily uptime totals · ${st.incidents} events · ${st.healthRuns} health runs · ${st.daReadings} DA readings · ${st.emails || 0} emails`],
       ].map(([k, v]) => `<div class="k">${k}</div><div>${v}</div>`).join('');
     }).catch((err) => ($('#sStore').innerHTML = `<div class="k">Storage</div><div class="muted">${esc(err.message)}</div>`));
     $('#sIp').onclick = (e) => busy(e.currentTarget, async () => {
@@ -1067,13 +1110,21 @@ VIEWS.settings = {
       ['Slow threshold', `<b>${(data.slowThresholdMs / 1000).toFixed(1)}s</b>`],
       ['Health & SEO checks', `Every <b>${m.healthIntervalHours}h</b>`],
     ]);
+    const ml = m.mail || {};
+    const smtp = !m.mailEnabled ? '<span class="pill paused">Not configured</span> <span class="muted">set SMTP_* and ALERT_EMAIL_TO</span>'
+      : ml.verified === true ? `<span class="pill up">Login OK</span> <span class="muted">checked ${ago(ml.verifiedAt)}</span>`
+      : ml.verified === false ? `<span class="pill down">Login failed</span> <span class="muted">${esc(ml.verifyError)}</span>`
+      : '<span class="pill paused">Checking…</span>';
+    const lastLine = (x, okTxt) => (x ? `${x.ok ? `<span class="pill up">${okTxt}</span>` : '<span class="pill down">Failed</span>'} ${ago(x.t)} · <span class="muted">${esc(x.subject)}</span>${x.ok ? '' : `<br><span style="color:var(--down)">${esc(x.error)}</span>`}` : '<span class="muted">No emails yet</span>');
     $('#sMailKv').innerHTML = kv([
-      ['Status', on(m.mailEnabled, 'Enabled', 'Not configured')],
+      ['Gmail / SMTP', `${smtp}${ml.from ? `<br><span class="muted">from ${esc(ml.from)}${ml.host ? ' via ' + esc(ml.host) : ''}</span>` : ''}`],
+      ['Last email', lastLine(ml.last, 'Sent')],
+      ['Last 30 days', `<b>${ml.sent30 || 0}</b> sent · <b style="color:${ml.failed30 ? 'var(--down)' : 'inherit'}">${ml.failed30 || 0}</b> failed`],
       ['Recipients', m.recipients ? `${m.recipients} address${m.recipients > 1 ? 'es' : ''}` : '—'],
       ['Reminders', m.realertMinutes ? `Every <b>${m.realertMinutes} min</b> while down` : 'Off'],
       ['Sent for', 'Down · still down · recovered · SSL expiring · health check failing'],
       ['Grouping', 'One email per check cycle'],
-    ]);
+    ]) + `<div class="k">Recent emails</div><div>${(ml.recent || []).length ? `<ul class="mini-log">${ml.recent.map((x) => `<li><span class="dot ${x.ok ? 'up' : 'down'}"></span><span class="t">${esc(fmtTime(x.t))}</span><span class="s">${esc(x.subject)}</span></li>`).join('')}</ul>` : '<span class="muted">None yet</span>'}</div>`;
     $('#sInt').innerHTML = kv([
       ['Moz Domain Authority', `${on(m.mozEnabled, 'Connected', 'Not connected')}${m.mozEnabled ? '' : ' <span class="muted">— set MOZ_API_TOKEN</span>'}`],
       ['Hostinger cron job', `${on(m.cronEnabled, 'Token set', 'No token')} <span class="muted">/api/cron?token=…</span>`],

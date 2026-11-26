@@ -26,7 +26,10 @@ The app also has a sidebar with live badges, a top bar with global search (press
 - **No false alarms from one blip**: a site is marked down only after `FAIL_THRESHOLD` failures in a row (default 2).
 - Cloudflare challenge pages are detected and shown as **Blocked**, not as false outages (see below).
 - **Homepage + article page** are checked for every site. The article is found automatically (latest WordPress post, or a recent page from the sitemap), or you can set `articleUrl` in `sites.json`.
-- **Health & SEO checks** every few hours: HTTP→HTTPS redirect, SSL, domain expiry, robots.txt (does it block search engines?), XML sitemap, noindex on the homepage, title & meta description, CSS/JS files loading, and for WordPress the REST API and RSS feed. Newly failing checks are emailed.
+- **Analytics & ads checks** (hourly): find GA4 / Tag Manager IDs and ad networks on the homepage, the article page and the site's own JS bundles. Ad networks covered: AdSense, Ad Manager, Ezoic, Mediavine, Raptive, Adnimation, AdPushup, Playwire, Taboola, Outbrain and more. The checks confirm the scripts load and that `ads.txt` lists the publisher ID, and **alert when a tag or ad code disappears**. Pages are fetched like a real browser, because some ad setups only serve their code to browsers.
+- **Domain email checks:** MX, SPF, DMARC and DKIM for every domain, looked up over DNS-over-HTTPS. DKIM tries common selectors (Google, Microsoft, Hostinger, Zoho…), and `dkimSelectors` adds your own.
+- **Mail status:** the Gmail/SMTP login is tested at startup and every 6 hours (also with the **Check Gmail login** button). Every alert email sent or failed is logged and shown in Settings, and a failing login or email appears under "Needs attention".
+- **Health & SEO checks** every hour (`HEALTH_CHECK_HOURS`): HTTP→HTTPS redirect, SSL, domain expiry, robots.txt (does it block search engines?), XML sitemap, noindex on the homepage, title & meta description, CSS/JS files loading, and for WordPress the REST API and RSS feed. Newly failing checks are emailed.
 - **Domain Authority** (Moz DA) per site, refreshed weekly, when `MOZ_API_TOKEN` is set.
 - **Site detail panel** (click any site): response-time chart, 30-day uptime bars, uptime for 24h / 7d / 30d, every page checked, health results, DA and the site's event history.
 - **Pause for maintenance**: pause a site from its detail panel. No checks and no alerts until you resume.
@@ -78,6 +81,8 @@ docker compose up -d --build
 | `enabled` | — | `false` removes the site from monitoring |
 | `articleUrl` | — | Article page to check. Leave it out to find one automatically, or set it to `false` to skip the article check. |
 | `pages` | — | Extra pages to check, for example `[{ "name": "Contact", "url": "https://…/contact", "keyword": "Send" }]` |
+| `ads` | — | `true` if the site must always show ads. Missing ad code is then always a failure, even if it was never seen. |
+| `dkimSelectors` | — | Extra DKIM selectors to look for, for example `["mysel"]` |
 
 The file is **reloaded automatically** when you save it, so you don't need to restart.
 (With Docker, editors that replace the file can break the single-file mount. If edits don't show up, run `docker compose restart`.)
@@ -269,6 +274,7 @@ All endpoints except `/healthz`, `/login` and `/api/cron` need you to be signed 
 - `POST /api/sites/:id/check`, `POST /api/sites/:id/health`: run that site's checks or health checks now
 - `POST /api/sites/:id/pause` with `{"paused": true|false}`: maintenance mode
 - `GET /api/storage`: data folder, size and record counts
+- `POST /api/mail/verify`: test the Gmail/SMTP login now; `GET /api/export/mail.csv`: log of every alert email
 - `GET /api/reports/monthly?months=12`: monthly uptime, response time, outages and downtime per site
 - `GET /api/export/checks.csv?days=30&site=`, `/api/export/daily.csv`, `/api/export/incidents.csv`, `/api/export/health.csv`, `/api/export/da.csv`: CSV downloads
 - `GET /api/events`: live stream of updates (Server-Sent Events)

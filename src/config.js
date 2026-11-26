@@ -32,7 +32,7 @@ export const config = {
   cronToken: process.env.CRON_TOKEN || '',
 
   // Extra checks: how often the slower health checks run, and Moz Domain Authority.
-  healthIntervalHours: num(process.env.HEALTH_CHECK_HOURS, 6),
+  healthIntervalHours: num(process.env.HEALTH_CHECK_HOURS, 1),
   articleRefreshHours: num(process.env.ARTICLE_REFRESH_HOURS, 12),
   mozToken: process.env.MOZ_API_TOKEN || '',
   daRefreshDays: num(process.env.DA_REFRESH_DAYS, 7),

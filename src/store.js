@@ -7,6 +7,7 @@
 //   <DATA_DIR>/incidents.ndjson        every event ever (down, recovered, blocked, health changes…), forever
 //   <DATA_DIR>/health.ndjson           every health & SEO check run, forever
 //   <DATA_DIR>/da.ndjson               every Domain Authority reading, forever
+//   <DATA_DIR>/mail.ndjson             every alert email sent or failed, forever
 //
 // Append-only files are never rewritten, so old data can't be lost by a crash mid-save, and they are
 // easy to back up, download (see /api/export/*) or open in any tool.
@@ -50,6 +51,7 @@ export class Store {
       this.incidents = legacyIncidents.slice(0, MEM_INCIDENTS);
       this.#appendNow('incidents.ndjson', [...legacyIncidents].reverse());
     }
+    this.mail = this.#tailJson(path.join(this.dir, 'mail.ndjson'), 200).reverse(); // newest first
     // Back-fill daily totals from hourly data saved by older versions.
     for (const s of Object.values(this.sites)) if (!s.daily && s.hourly?.length) this.#rebuildDaily(s);
 
@@ -122,6 +124,12 @@ export class Store {
 
   logHealth(siteId, health) {
     this.#append('health.ndjson', { t: health.checkedAt, site: siteId, items: health.items.map((i) => ({ key: i.key, status: i.status, detail: i.detail })) });
+  }
+
+  logMail(entry) {
+    this.mail.unshift(entry);
+    if (this.mail.length > 200) this.mail.length = 200;
+    this.#append('mail.ndjson', entry);
   }
 
   logDa(siteId, da) {
@@ -198,6 +206,7 @@ export class Store {
       incidents: countLines('incidents.ndjson'),
       healthRuns: countLines('health.ndjson'),
       daReadings: countLines('da.ndjson'),
+      emails: countLines('mail.ndjson'),
     };
   }
 
