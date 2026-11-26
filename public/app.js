@@ -318,11 +318,11 @@ function parseRoute() {
   const h = location.hash.replace(/^#\/?/, '');
   const [a, b] = h.split('/');
   if (a === 'sites' && b) return { name: 'site', id: decodeURIComponent(b) };
-  return { name: ['sites', 'incidents', 'health', 'domains', 'settings'].includes(a) ? a : 'overview' };
+  return { name: ['sites', 'incidents', 'health', 'domains', 'reports', 'settings'].includes(a) ? a : 'overview' };
 }
 function pageTitle() {
   if (route.name === 'site') return data?.sites.find((s) => s.id === route.id)?.name || 'Site';
-  return { overview: 'Overview', sites: 'Sites', incidents: 'Incidents', health: 'Health & SEO', domains: 'Domains & SSL', settings: 'Settings & alerts' }[route.name];
+  return { overview: 'Overview', sites: 'Sites', incidents: 'Incidents', health: 'Health & SEO', domains: 'Domains & SSL', reports: 'Reports & history', settings: 'Settings & alerts' }[route.name];
 }
 function go() {
   route = parseRoute();
@@ -740,7 +740,7 @@ VIEWS.incidents = {
         <div><h2>Incidents &amp; activity</h2><p>Every outage, recovery and health change across TMJ websites.</p></div>
         <div class="acts"><button class="btn" id="incCsv">${I.download}Export CSV</button></div>
       </div>
-      <div class="kpis" id="incKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+      <div class="kpis k4" id="incKpis"></div>
       <section class="card">
         <div class="card-h">
           <div class="tabs" id="incTabs">
@@ -815,7 +815,7 @@ VIEWS.health = {
         <div><h2>Health &amp; SEO</h2><p id="hSub">Checks that don’t take a site offline but quietly hurt it.</p></div>
         <div class="acts"><button class="btn primary" id="hRun">${I.task}Run all health checks</button></div>
       </div>
-      <div class="kpis" id="hKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+      <div class="kpis k4" id="hKpis"></div>
       <section class="card" style="margin-bottom:18px"><div class="card-h"><h3>Check matrix</h3><span class="legend-inline"><span><i style="background:var(--up)"></i>Pass</span><span><i style="background:var(--warn)"></i>Warning</span><span><i style="background:var(--down)"></i>Fail</span><span><i style="background:var(--pending)"></i>Unknown / blocked</span></span></div><div class="card-b flush tbl-wrap" id="hMatrix"></div></section>
       <section class="card"><div class="card-h"><h3>Issues to fix</h3><span class="sub" id="hIssuesN"></span></div><div class="card-b flush tbl-wrap" id="hIssues"></div></section>`;
   },
@@ -860,7 +860,7 @@ VIEWS.domains = {
     return `
       <div class="page-head"><div><h2>Domains, SSL &amp; authority</h2><p>Know what needs renewing before it breaks.</p></div>
         <div class="acts"><button class="btn" id="dCsv">${I.download}Export CSV</button></div></div>
-      <div class="kpis" id="dKpis" style="grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+      <div class="kpis k4" id="dKpis"></div>
       <section class="card"><div class="card-h"><h3>Renewal schedule</h3><span class="sub">sorted by the soonest expiry</span></div><div class="card-b flush tbl-wrap" id="dTbl"></div></section>`;
   },
   rows() {
@@ -900,6 +900,107 @@ VIEWS.domains = {
   },
 };
 
+// =================================================================== REPORTS & HISTORY
+const repState = { months: Number(pref.get('repMonths', 12)), metric: pref.get('repMetric', 'uptime') };
+let report = null;
+const fmtMonth = (k) => new Date(k + '-01T00:00:00Z').toLocaleDateString([], { month: 'short', year: '2-digit', timeZone: 'UTC' });
+const fmtMin = (m) => (m == null ? '—' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`);
+VIEWS.reports = {
+  sub: 'Long-term uptime and performance',
+  mount() {
+    return `
+      <div class="page-head">
+        <div><h2>Reports &amp; history</h2><p id="repSub">Monthly uptime, speed and outages for every website — kept permanently.</p></div>
+        <div class="acts">
+          <select class="field-s" id="repMonths" aria-label="Period"><option value="6">Last 6 months</option><option value="12">Last 12 months</option><option value="24">Last 24 months</option><option value="36">Last 36 months</option></select>
+          <button class="btn" id="repCsv">${I.download}Export report</button>
+        </div>
+      </div>
+      <div class="kpis k4" id="repKpis"></div>
+      <section class="card">
+        <div class="card-h">
+          <div class="tabs" id="repTabs">
+            <button data-m="uptime">Uptime</button><button data-m="avgMs">Avg response</button><button data-m="outages">Outages</button><button data-m="downMinutes">Downtime</button>
+          </div>
+          <span class="legend-inline" id="repLegend"></span>
+        </div>
+        <div class="card-b flush tbl-wrap" id="repTbl"><div class="empty">Loading history…</div></div>
+      </section>`;
+  },
+  bind() {
+    $('#repMonths').value = String(repState.months);
+    $('#repMonths').onchange = (e) => { repState.months = Number(e.target.value); pref.set('repMonths', repState.months); this.load(); };
+    $('#repTabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; repState.metric = b.dataset.m; pref.set('repMetric', repState.metric); this.paint(); };
+    $('#repCsv').onclick = () => {
+      if (!report) return;
+      downloadCsv(`tmj-monthly-report-${new Date().toISOString().slice(0, 10)}.csv`, [
+        ['Website', 'Month', 'Uptime %', 'Avg response ms', 'Outages', 'Downtime minutes', 'Checks', 'Failed checks'],
+        ...report.sites.flatMap((s) => report.months.map((k) => { const m = s.months[k]; return [s.name, k, m.uptime?.toFixed(3), m.avgMs, m.outages, m.downMinutes, m.checks, m.failed]; })),
+      ]);
+    };
+    this.load();
+  },
+  async load() {
+    try { report = await api(`/api/reports/monthly?months=${repState.months}`); this.paint(); }
+    catch (err) { $('#repTbl').innerHTML = `<div class="empty">Could not load the report: ${esc(err.message)}</div>`; }
+  },
+  update() {
+    clearTimeout(this.t);
+    this.t = setTimeout(() => this.load(), 5000); // live data changes this month's numbers
+  },
+  paint() {
+    if (!report || !$('#repTbl')) return;
+    const { months, sites } = report;
+    const cur = months[months.length - 1];
+    const agg = (k) => {
+      let n = 0, ok = 0, out = 0, down = 0;
+      for (const s of sites) { const m = s.months[k]; n += m.checks; ok += m.checks - m.failed; out += m.outages; down += m.downMinutes; }
+      return { up: n ? (ok / n) * 100 : null, out, down };
+    };
+    const a = agg(cur);
+    const kpi = (label, value, sub, icon, tone = '') => `<div class="kpi"><div class="kpi-top"><span>${label}</span><span class="kpi-ic ${tone}">${icon}</span></div><div class="kpi-v">${value}</div><div class="kpi-s">${sub}</div></div>`;
+    $('#repKpis').innerHTML =
+      kpi('History since', report.since ? new Date(report.since + 'T00:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—', report.since ? `${Math.max(1, Math.round((Date.now() - Date.parse(report.since)) / 86400000))} days recorded` : 'starts with the first check', I.clock) +
+      kpi(`Uptime · ${fmtMonth(cur)}`, pct(a.up), 'all websites, this month', I.trend, 'g') +
+      kpi(`Outages · ${fmtMonth(cur)}`, a.out, a.out ? '<span class="bad">this month</span>' : '<span class="good">none this month</span>', I.x, a.out ? 'r' : '') +
+      kpi(`Downtime · ${fmtMonth(cur)}`, fmtMin(a.down), 'estimated from failed checks', I.alert, a.down ? 'y' : '');
+    $$('#repTabs button').forEach((b) => b.classList.toggle('on', b.dataset.m === repState.metric));
+    const metric = repState.metric;
+    $('#repLegend').innerHTML = metric === 'uptime'
+      ? '<span><i style="background:var(--up-soft);border:1px solid var(--up)"></i>≥ 99.9%</span><span><i style="background:var(--warn-soft);border:1px solid var(--warn)"></i>≥ 99%</span><span><i style="background:var(--down-soft);border:1px solid var(--down)"></i>&lt; 99%</span><span>— no data</span>'
+      : metric === 'avgMs' ? `<span><i style="background:var(--warn-soft);border:1px solid var(--warn)"></i>slower than ${(data?.slowThresholdMs || 5000) / 1000}s</span><span>— no data</span>`
+      : '<span><i style="background:var(--down-soft);border:1px solid var(--down)"></i>any outage / downtime</span>';
+    const cell = (m) => {
+      if (!m.checks) return '<td class="c muted">—</td>';
+      const tipTxt = `<b>${pct(m.uptime, 3)} uptime</b><br>${m.checks} checks · ${m.failed} failed<br>${m.outages} outage${m.outages === 1 ? '' : 's'} · ~${fmtMin(m.downMinutes)} down<br>Avg response ${m.avgMs ?? '—'} ms`;
+      let txt, bg = '', fg = '';
+      if (metric === 'uptime') {
+        txt = pct(m.uptime, m.uptime >= 99.995 ? 0 : 2);
+        [bg, fg] = m.uptime >= 99.9 ? ['var(--up-soft)', 'var(--up)'] : m.uptime >= 99 ? ['var(--warn-soft)', 'var(--warn)'] : ['var(--down-soft)', 'var(--down)'];
+      } else if (metric === 'avgMs') {
+        txt = m.avgMs != null ? `${m.avgMs} ms` : '—';
+        if (m.avgMs > (data?.slowThresholdMs || 5000)) [bg, fg] = ['var(--warn-soft)', 'var(--warn)'];
+      } else if (metric === 'outages') {
+        txt = String(m.outages);
+        if (m.outages) [bg, fg] = ['var(--down-soft)', 'var(--down)'];
+      } else {
+        txt = fmtMin(m.downMinutes);
+        if (m.downMinutes) [bg, fg] = ['var(--down-soft)', 'var(--down)'];
+      }
+      return `<td class="c num" data-tip="${esc(tipTxt)}"><span style="display:inline-block;min-width:62px;padding:4px 6px;border-radius:7px;font-weight:650;background:${bg};color:${fg || 'var(--text)'}">${txt}</span></td>`;
+    };
+    const total = (s) => {
+      let n = 0, ok = 0, ms = 0, out = 0, down = 0;
+      for (const k of months) { const m = s.months[k]; n += m.checks; ok += m.checks - m.failed; ms += (m.avgMs || 0) * (m.checks - m.failed); out += m.outages; down += m.downMinutes; }
+      return metric === 'uptime' ? pct(n ? (ok / n) * 100 : null) : metric === 'avgMs' ? (ok ? `${Math.round(ms / ok)} ms` : '—') : metric === 'outages' ? out : fmtMin(down);
+    };
+    $('#repTbl').innerHTML = `<table class="tbl"><thead><tr><th>Website</th>${months.map((k) => `<th class="c">${fmtMonth(k)}</th>`).join('')}<th class="r">Period</th></tr></thead><tbody>
+      ${sites.map((s) => `<tr class="click" data-href="#/sites/${encodeURIComponent(s.id)}"><td><div class="ent">${avatar(s)}<div><b>${esc(s.name)}</b><span class="u">${s.since ? 'since ' + esc(s.since) : 'no history yet'}</span></div></div></td>${months.map((k) => cell(s.months[k])).join('')}<td class="r num"><b>${total(s)}</b></td></tr>`).join('')}
+      </tbody></table>`;
+    $('#repSub').textContent = `Monthly ${({ uptime: 'uptime', avgMs: 'average response time', outages: 'outages', downMinutes: 'downtime' })[metric]} for every website · daily totals are kept permanently`;
+  },
+};
+
 // =================================================================== SETTINGS
 VIEWS.settings = {
   sub: 'Configuration and integrations',
@@ -913,6 +1014,17 @@ VIEWS.settings = {
         <section class="card"><div class="card-h"><h3>${I.plug}Integrations</h3></div><div class="kv" id="sInt"></div></section>
         <section class="card"><div class="card-h"><h3>${I.server}System</h3></div><div class="kv" id="sSys"></div></section>
       </div>
+      <section class="card" style="margin-bottom:18px"><div class="card-h"><h3>${I.server}Data &amp; storage</h3><span class="sub">history is kept on the server and survives redeploys</span></div>
+        <div class="kv" id="sStore"><div class="k">Loading…</div><div></div></div>
+        <div class="card-b" style="border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select class="field-s" id="dlDays" aria-label="Check log period"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 365 days</option><option value="0">Everything</option></select>
+          <a class="btn" id="dlChecks" href="/api/export/checks.csv?days=30" download>${I.download}Check log (CSV)</a>
+          <a class="btn" href="/api/export/daily.csv" download>${I.download}Daily uptime (CSV)</a>
+          <a class="btn" href="/api/export/incidents.csv" download>${I.download}All incidents (CSV)</a>
+          <a class="btn" href="/api/export/health.csv" download>${I.download}Health history (CSV)</a>
+          <a class="btn" href="/api/export/da.csv" download>${I.download}DA history (CSV)</a>
+        </div>
+      </section>
       <section class="card"><div class="card-h"><h3>${I.info}How to change settings</h3></div><div class="card-b" style="color:var(--text-2)">
         <p style="margin-top:0">In hPanel, open the website → <b>Environment variables</b>, edit a value and save. Hostinger redeploys automatically.</p>
         <p>Common variables: <span class="code">DASHBOARD_USER</span> <span class="code">DASHBOARD_PASS</span> <span class="code">ALERT_EMAIL_TO</span> <span class="code">SMTP_USER</span> <span class="code">SMTP_PASS</span> <span class="code">CHECK_INTERVAL_SECONDS</span> <span class="code">FAIL_THRESHOLD</span> <span class="code">REALERT_MINUTES</span> <span class="code">MOZ_API_TOKEN</span> <span class="code">APP_NAME</span></p>
@@ -924,6 +1036,19 @@ VIEWS.settings = {
       const r = await api('/api/test-email', { method: 'POST' });
       toast(r.sent ? 'Test email sent ✔' : r.skipped ? 'Email is not configured — set the SMTP_* variables' : `Email failed: ${r.error}`);
     });
+    $('#dlDays').onchange = (e) => ($('#dlChecks').href = `/api/export/checks.csv?days=${e.target.value}`);
+    api('/api/storage').then((st) => {
+      const size = st.bytes > 1048576 ? `${(st.bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(st.bytes / 1024))} KB`;
+      const fmtD = (d) => (d ? new Date(d + 'T00:00:00Z').toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—');
+      const deployWarn = /hbuilds/.test(st.dir);
+      $('#sStore').innerHTML = [
+        ['Storage folder', `<span class="code">${esc(st.dir)}</span> ${st.writable ? '<span class="pill up">Writable</span>' : '<span class="pill down">Not writable</span>'}${deployWarn ? ' <span class="pill degraded">Inside deploy folder</span>' : ''}`],
+        ['Size on disk', `${size} · ${st.files} files`],
+        ['History since', fmtD(st.historySince)],
+        ['Detailed check log', `${st.logDays} day${st.logDays === 1 ? '' : 's'} stored${st.oldestLog ? ` (from ${fmtD(st.oldestLog)})` : ''} · kept ${st.retentionDays ? st.retentionDays + ' days' : 'forever'} <span class="muted">(LOG_RETENTION_DAYS)</span>`],
+        ['Kept forever', `Daily uptime totals · ${st.incidents} events · ${st.healthRuns} health runs · ${st.daReadings} DA readings`],
+      ].map(([k, v]) => `<div class="k">${k}</div><div>${v}</div>`).join('');
+    }).catch((err) => ($('#sStore').innerHTML = `<div class="k">Storage</div><div class="muted">${esc(err.message)}</div>`));
     $('#sIp').onclick = (e) => busy(e.currentTarget, async () => {
       const { ip } = await api('/api/outgoing-ip');
       if (!ip) return toast('Could not detect the outgoing IP');
