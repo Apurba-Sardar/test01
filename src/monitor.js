@@ -3,6 +3,7 @@ import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { config } from './config.js';
 import { sendMail } from './mailer.js';
+import { isBotBlock } from './blocked.js';
 import { runHealthChecks, discoverArticle, fetchDomainAuthority } from './checks.js';
 
 // Text that means a WordPress site is broken even if the server answers.
@@ -13,11 +14,8 @@ const WP_ERROR_MARKERS = [
 ];
 const NEXT_ERROR_MARKERS = ['Application error: a server-side exception has occurred', 'Internal Server Error'];
 
-// Cloudflare (or similar) bot protection answering instead of the real site.
-const CHALLENGE_MARKERS = ['Attention Required! | Cloudflare', '<title>Just a moment...</title>', 'challenge-platform', 'cf-chl-'];
-const isChallenge = (res, body) =>
-  res.headers.get('cf-mitigated') === 'challenge' ||
-  ([403, 429, 503].includes(res.status) && CHALLENGE_MARKERS.some((m) => body.includes(m)));
+// Bot protection (Cloudflare / Vercel) answering instead of the real site — see blocked.js.
+const isChallenge = isBotBlock;
 
 const SSL_CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 const fmtDur = (ms) => {

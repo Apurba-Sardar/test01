@@ -2,14 +2,13 @@
 // don't take a site offline but quietly hurt it), plus article discovery and Moz DA.
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { isBotBlock } from './blocked.js';
 
 const UA = 'InternalStatusMonitor/1.0';
 // Ad networks (Ezoic, etc.) and some tag setups only add their code for real browsers, so tag checks look like one.
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
 
-const CHALLENGE = ['Attention Required! | Cloudflare', '<title>Just a moment...</title>', 'challenge-platform', 'cf-chl-'];
-const challenged = (res, body = '') =>
-  res.headers.get('cf-mitigated') === 'challenge' || ([403, 429, 503].includes(res.status) && CHALLENGE.some((m) => body.includes(m)));
+const challenged = (res, body = '') => isBotBlock(res, body);
 
 async function get(url, { redirect = 'follow', timeout = 15000, method = 'GET', ua = UA } = {}) {
   const res = await fetch(url, {
