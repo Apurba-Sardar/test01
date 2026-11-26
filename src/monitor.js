@@ -268,7 +268,13 @@ export class Monitor extends EventEmitter {
     const others = pages.slice(1).map((p) => s.pages[p.key]).filter((x) => x && x.status !== 'pending');
     const slow = hr?.ok && hr.ms > config.slowThresholdMs;
     const counted = results.filter((r) => r && !r.blocked);
-    this.store.record(site.id, { t: now, ok: counted.length ? counted.every((r) => r.ok) : null, ms: hr?.ms ?? null, slow });
+    const failed = results.find((r) => r && !r.ok && !r.blocked);
+    this.store.record(site.id, { t: now, ok: counted.length ? counted.every((r) => r.ok) : null, ms: hr?.ms ?? null, slow }, {
+      code: hr?.code ?? null,
+      ...(failed ? { err: failed.error } : {}),
+      // per page: [ok (1/0, null = blocked), ms, http code]
+      pages: Object.fromEntries(pages.map((p, i) => [p.key, results[i] ? [results[i].blocked ? null : results[i].ok ? 1 : 0, results[i].ms, results[i].code] : null])),
+    });
     s.lastCheck = now;
     s.responseTime = hr?.ms ?? null;
     s.statusCode = hr?.code ?? null;
@@ -315,7 +321,18 @@ export class Monitor extends EventEmitter {
         const daAge = s.da ? Date.now() - s.da.checkedAt : Infinity;
         const daDue = !s.da || (s.da.noToken && config.mozToken) || daAge > (s.da.error ? 6 * 3600000 : config.daRefreshDays * 86400000);
         if (daDue) {
-          try { s.da = { ...(await fetchDomainAuthority(site.url)), prev: s.da?.value ?? s.da?.prev ?? null }; } catch (e) { s.da = { ...s.da, error: e.message, checkedAt: Date.now() }; }
+          try {
+            const r = await fetchDomainAuthority(site.url);
+            if (typeof r.value === 'number') {
+              s.da = { ...r, prev: s.da?.value ?? s.da?.prev ?? null };
+              this.store.logDa(site.id, s.da);
+            } else {
+              // keep the last known score; remember the error so it is retried in 6 h
+              s.da = { ...(s.da || {}), error: r.error, noToken: r.noToken, checkedAt: r.checkedAt };
+            }
+          } catch (e) {
+            s.da = { ...(s.da || {}), error: e.message, checkedAt: Date.now() };
+          }
           this.store.dirty = true;
           this.emit('update');
         }
@@ -329,6 +346,7 @@ export class Monitor extends EventEmitter {
     const s = this.store.get(site.id);
     const before = new Map((s.health?.items || []).map((i) => [i.key, i.status]));
     s.health = await runHealthChecks(site, s.ssl);
+    this.store.logHealth(site.id, s.health);
     this.store.dirty = true;
     const newlyFailed = s.health.items.filter((i) => i.status === 'fail' && before.has(i.key) && before.get(i.key) !== 'fail');
     const fixed = s.health.items.filter((i) => i.status === 'pass' && before.get(i.key) === 'fail');

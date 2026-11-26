@@ -82,6 +82,25 @@ docker compose up -d --build
 The file is **reloaded automatically** when you save it, so you don't need to restart.
 (With Docker, editors that replace the file can break the single-file mount. If edits don't show up, run `docker compose restart`.)
 
+## History & data storage
+
+Everything is stored in plain files in the data folder (`DATA_DIR`, by default `~/tmj-dashboard-data` on Hostinger):
+
+| File | What it holds | Kept |
+|---|---|---|
+| `state.json` | Current status, last 24 h of checks (charts), 90 days of hourly totals, **daily totals per site** | Daily totals forever |
+| `checks/YYYY-MM-DD.ndjson` | **Every single check** (result, response time, HTTP code, error, homepage & article results) | `LOG_RETENTION_DAYS` (default 365; `0` = forever) |
+| `incidents.ndjson` | Every event: down, recovered, blocked, slow, health check failed/fixed, paused/resumed | Forever |
+| `health.ndjson` | Every health & SEO check run | Forever |
+| `da.ndjson` | Every Domain Authority reading | Forever |
+
+- The log files are append-only: new lines are added and nothing is rewritten, so old data isn't lost if the app crashes mid-save.
+- **Hostinger:** the app folder (`…/hbuilds/…`) is replaced on every deploy. If the data folder would be inside it, the app uses `~/tmj-dashboard-data` instead and copies any existing history there once.
+- **Storage use:** about 0.7 MB a day for 6 sites at one check a minute, so roughly 250 MB a year with the default retention.
+- **Reports & history** page: monthly uptime, average response, outages and downtime per site, for the last 6–36 months.
+- **Downloads** (Settings & alerts → Data & storage): check log (7/30/90/365 days or everything), daily uptime, all incidents, health history and DA history, all as CSV.
+- **Backup:** copy the data folder (for example, download it with Hostinger's File Manager).
+
 ## Domain Authority (Moz)
 
 1. Create a Moz API token at <https://moz.com/products/api>. A free plan with a small monthly quota is available.
@@ -249,6 +268,9 @@ All endpoints except `/healthz`, `/login` and `/api/cron` need you to be signed 
 - `GET /api/sites/:id`: full detail for one site (24h history, 30-day hourly uptime, health checks, events)
 - `POST /api/sites/:id/check`, `POST /api/sites/:id/health`: run that site's checks or health checks now
 - `POST /api/sites/:id/pause` with `{"paused": true|false}`: maintenance mode
+- `GET /api/storage`: data folder, size and record counts
+- `GET /api/reports/monthly?months=12`: monthly uptime, response time, outages and downtime per site
+- `GET /api/export/checks.csv?days=30&site=`, `/api/export/daily.csv`, `/api/export/incidents.csv`, `/api/export/health.csv`, `/api/export/da.csv`: CSV downloads
 - `GET /api/events`: live stream of updates (Server-Sent Events)
 - `POST /api/check-all`, `POST /api/check/:id`: run checks now
 - `GET /api/outgoing-ip`: the server's public outgoing IP, which is the one to allow in Cloudflare

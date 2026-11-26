@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+
 // Central configuration, read from environment variables.
 // A local .env file is loaded if present; on hosts like Hostinger you can set the variables in the panel instead.
 try {
@@ -10,7 +13,9 @@ const num = (v, d) => (v === undefined || v === '' || isNaN(Number(v)) ? d : Num
 export const config = {
   port: num(process.env.PORT, 3000),
   sitesFile: process.env.SITES_FILE || 'sites.json',
-  dataDir: process.env.DATA_DIR || 'data',
+  dataDir: resolveDataDir(),
+  // Raw per-check logs are kept this many days (0 = forever). Daily totals and events are always kept.
+  logRetentionDays: num(process.env.LOG_RETENTION_DAYS, 365),
 
   checkIntervalSec: num(process.env.CHECK_INTERVAL_SECONDS, 60),
   timeoutMs: num(process.env.REQUEST_TIMEOUT_MS, 15000),
@@ -50,3 +55,16 @@ export const config = {
     to: (process.env.ALERT_EMAIL_TO || '').split(',').map((s) => s.trim()).filter(Boolean),
   },
 };
+
+/**
+ * Where history is stored. Hosts like Hostinger replace the app folder (…/hbuilds/…) on every deploy,
+ * which would wipe the history, so a data folder inside it is moved to the home directory instead.
+ */
+function resolveDataDir() {
+  const wanted = path.resolve(process.env.DATA_DIR || 'data');
+  const inDeployFolder = wanted.split(path.sep).includes('hbuilds');
+  if (!inDeployFolder) return wanted;
+  const safe = path.join(os.homedir(), 'tmj-dashboard-data');
+  console.warn(`[store] ${wanted} is inside the deploy folder and would be wiped on every deploy — using ${safe} instead`);
+  return safe;
+}

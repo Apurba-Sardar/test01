@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { Store } from './store.js';
@@ -28,7 +29,83 @@ async function outgoingIp(refresh = false) {
   return null;
 }
 
-const store = new Store(config.dataDir);
+// If the configured data folder can't be created or written (e.g. a placeholder path was pasted into
+// DATA_DIR), fall back to a folder in the home directory instead of silently keeping no history.
+(function ensureWritableDataDir() {
+  const ok = (dir) => { try { fs.mkdirSync(dir, { recursive: true }); fs.accessSync(dir, fs.constants.W_OK); return true; } catch { return false; } };
+  if (ok(config.dataDir)) return;
+  const safe = path.join(os.homedir(), 'tmj-dashboard-data');
+  console.warn(`[store] cannot write to ${config.dataDir} — using ${safe} instead (check DATA_DIR)`);
+  config.dataDir = safe;
+})();
+
+// One-time move: if history used to live in ./data (inside the deploy folder) and the data folder is now
+// somewhere safe, copy what is there so the current history isn't lost.
+(function migrateOldData() {
+  const old = path.resolve('data');
+  if (old === config.dataDir) return;
+  try {
+    if (fs.existsSync(path.join(old, 'state.json')) && !fs.existsSync(path.join(config.dataDir, 'state.json'))) {
+      fs.mkdirSync(config.dataDir, { recursive: true });
+      fs.cpSync(old, config.dataDir, { recursive: true });
+      console.log(`[store] copied existing history from ${old} to ${config.dataDir}`);
+    }
+  } catch (err) {
+    console.error(`[store] could not copy old history: ${err.message}`);
+  }
+})();
+
+const store = new Store(config.dataDir, { retentionDays: config.logRetentionDays });
+let storageCache = null;
+const storageStats = () => {
+  if (!storageCache || Date.now() - storageCache.at > 60_000) storageCache = { at: Date.now(), v: store.stats() };
+  return storageCache.v;
+};
+
+// ---- CSV helpers for downloads
+const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+function startCsv(res, name, header) {
+  res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${name}"`, 'cache-control': 'no-store' });
+  res.write('\uFEFF' + header.map(csvCell).join(',') + '\n');
+}
+const csvRow = (res, cells) => res.write(cells.map(csvCell).join(',') + '\n');
+const iso = (t) => (t ? new Date(t).toISOString() : '');
+
+/** Monthly report per site from daily totals (kept forever) and the event log. */
+async function monthlyReport(months) {
+  const now = new Date();
+  const keys = [];
+  for (let i = months - 1; i >= 0; i--) keys.push(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)).toISOString().slice(0, 7));
+  const outages = new Map(); // siteId|month -> count
+  for await (const i of store.readLog('incidents.ndjson')) {
+    if (i.to !== 'down') continue;
+    const k = `${i.siteId}|${iso(i.t).slice(0, 7)}`;
+    outages.set(k, (outages.get(k) || 0) + 1);
+  }
+  const sites = monitor.sites.map((site) => {
+    const s = store.get(site.id);
+    const m = {};
+    for (const k of keys) m[k] = { checks: 0, ok: 0, ms: 0 };
+    for (const d of s.daily || []) {
+      const x = m[d.d.slice(0, 7)];
+      if (x) { x.checks += d.n; x.ok += d.ok; x.ms += d.ms; }
+    }
+    const out = {};
+    for (const k of keys) {
+      const x = m[k];
+      out[k] = {
+        checks: x.checks,
+        failed: x.checks - x.ok,
+        uptime: x.checks ? (x.ok / x.checks) * 100 : null,
+        avgMs: x.ok ? Math.round(x.ms / x.ok) : null,
+        downMinutes: Math.round(((x.checks - x.ok) * config.checkIntervalSec) / 60),
+        outages: outages.get(`${site.id}|${k}`) || 0,
+      };
+    }
+    return { id: site.id, name: site.name, type: site.type, months: out, since: s.daily?.[0]?.d || null };
+  });
+  return { months: keys, sites, since: sites.map((s) => s.since).filter(Boolean).sort()[0] || null, intervalSec: config.checkIntervalSec };
+}
 const monitor = new Monitor(store);
 const clients = new Set();
 
@@ -175,8 +252,50 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await monitor.runHealth(site));
     }
 
+    if (p === '/api/storage') return json(res, 200, storageStats());
+    if (p === '/api/reports/monthly') return json(res, 200, await monthlyReport(Math.min(Math.max(Number(url.searchParams.get('months')) || 12, 1), 36)));
+
+    // ---- downloads (CSV, streamed from the permanent logs)
+    if (p === '/api/export/checks.csv') {
+      const days = Number(url.searchParams.get('days')) || 30;
+      const site = url.searchParams.get('site') || '';
+      const from = days > 0 ? Date.now() - days * 86400000 : 0;
+      const pageKeys = ['home', 'article'];
+      startCsv(res, `tmj-checks-${site || 'all'}-${days > 0 ? days + 'd' : 'all'}.csv`, ['time_utc', 'site', 'result', 'response_ms', 'slow', 'http_code', 'error', 'homepage_ok', 'homepage_ms', 'article_ok', 'article_ms']);
+      for await (const r of store.readChecks({ from, site })) {
+        const pg = (k) => { const v = r.pages?.[k]; return v ? [v[0] === null ? 'blocked' : v[0] ? 'ok' : 'fail', v[1]] : ['', '']; };
+        csvRow(res, [iso(r.t), r.site, r.ok === null ? 'blocked' : r.ok ? 'ok' : 'fail', r.ms, r.slow ? 'yes' : '', r.code, r.err, ...pageKeys.flatMap(pg)]);
+      }
+      return res.end();
+    }
+    if (p === '/api/export/daily.csv') {
+      startCsv(res, 'tmj-daily-uptime.csv', ['date_utc', 'site', 'checks', 'successful', 'failed', 'uptime_percent', 'avg_response_ms']);
+      for (const site of monitor.sites)
+        for (const d of store.get(site.id).daily || [])
+          csvRow(res, [d.d, site.name, d.n, d.ok, d.n - d.ok, d.n ? ((d.ok / d.n) * 100).toFixed(3) : '', d.ok ? Math.round(d.ms / d.ok) : '']);
+      return res.end();
+    }
+    if (p === '/api/export/incidents.csv') {
+      startCsv(res, 'tmj-incidents.csv', ['time_utc', 'site', 'page', 'event', 'details']);
+      const rows = [];
+      for await (const i of store.readLog('incidents.ndjson')) rows.push(i);
+      for (const i of rows.reverse()) csvRow(res, [iso(i.t), i.name, i.page || '', i.to, i.detail]);
+      return res.end();
+    }
+    if (p === '/api/export/da.csv') {
+      startCsv(res, 'tmj-domain-authority.csv', ['time_utc', 'site', 'domain_authority', 'spam_score']);
+      for await (const r of store.readLog('da.ndjson')) csvRow(res, [iso(r.t), monitor.sites.find((s) => s.id === r.site)?.name || r.site, r.da, r.spam]);
+      return res.end();
+    }
+    if (p === '/api/export/health.csv') {
+      startCsv(res, 'tmj-health-checks.csv', ['time_utc', 'site', 'check', 'status', 'details']);
+      for await (const r of store.readLog('health.ndjson'))
+        for (const i of r.items || []) csvRow(res, [iso(r.t), monitor.sites.find((s) => s.id === r.site)?.name || r.site, i.key, i.status, i.detail]);
+      return res.end();
+    }
+
     if (p === '/api/incidents') {
-      const limit = Math.min(Number(url.searchParams.get('limit')) || 500, 500);
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 500, 5000);
       return json(res, 200, { incidents: store.incidents.slice(0, limit), total: store.incidents.length });
     }
     if (req.method === 'POST' && p === '/api/health-all') {
@@ -205,6 +324,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(config.port, () => {
   console.log(`Status dashboard on http://localhost:${config.port}`);
+  console.log(`History stored in ${config.dataDir} (raw check logs kept ${config.logRetentionDays ? config.logRetentionDays + ' days' : 'forever'}; daily totals and events forever)`);
   console.log(`Email alerts: ${mailEnabled() ? 'enabled → ' + config.smtp.to.join(', ') : 'DISABLED (set SMTP_* and ALERT_EMAIL_TO)'}`);
   if (!config.dashboardUser) console.log('Warning: DASHBOARD_USER/DASHBOARD_PASS not set — dashboard is open to anyone who can reach it');
   if (!config.mozToken) console.log('Domain Authority: disabled (set MOZ_API_TOKEN to enable)');

@@ -160,6 +160,7 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 .link-more { font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 
 .kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+.kpis.k4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .kpi-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .kpi-top span { color: var(--muted); font-size: 12.5px; font-weight: 600; }
@@ -389,6 +390,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
    ========================================================= */
 @media (max-width: 1280px) {
   .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpis.k4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .g-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gsearch { width: 220px; }
 }
@@ -410,6 +412,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 }
 @media (max-width: 640px) {
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .kpis.k4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-head .acts { width: 100%; }
+  .page-head .acts > * { flex: 1 1 auto; }
   .g-3 { grid-template-columns: minmax(0, 1fr); }
   .kpi { padding: 14px; }
   .kpi-v { font-size: 23px; }
